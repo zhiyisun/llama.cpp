@@ -375,8 +375,8 @@ protected:
     // populated only when pooling_type != LLAMA_POOLING_TYPE_NONE
     std::map<llama_seq_id, std::vector<float>> embd_seq;
 
-    int32_t output_size = 0; // capacity (of tokens positions) for the output buffers
-    int32_t n_outputs   = 0; // number of actually-used outputs in the current ubatch or last logical batch
+    int32_t n_outputs     = 0; // number of actually-used outputs in the current ubatch or last logical batch
+    int32_t n_outputs_max = 0; // capacity (of tokens positions) for the output buffers
 
     std::vector<int32_t> output_ids; // map batch token positions to ids of the logits and embd buffers
 

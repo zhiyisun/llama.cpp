@@ -1274,14 +1274,13 @@ int32_t llama_context::output_reserve(int32_t n_outputs) {
     logits = has_logits ? output_base               : nullptr;
     embd   = has_embd   ? output_base + logits_size : nullptr;
 
-    output_size = n_outputs_max;
-
     // set all ids as invalid (negative)
     std::fill(output_ids.begin(), output_ids.end(), -1);
 
     ggml_backend_buffer_clear(buf_output.get(), 0);
 
-    n_outputs = 0;
+    this->n_outputs     = 0;
+    this->n_outputs_max = n_outputs_max;
 
     return n_outputs_max;
 }
@@ -2131,7 +2130,7 @@ size_t llama_context::state_get_data(llama_io_write_i & io) {
 
         std::vector<int32_t> w_output_pos;
 
-        GGML_ASSERT(n_outputs <= output_size);
+        GGML_ASSERT(n_outputs <= n_outputs_max);
 
         w_output_pos.resize(n_outputs);
 
@@ -2682,7 +2681,6 @@ int llama_context_kv_self::decode(llama_batch & inp_batch) {
             /* logits_all   */ logits_all);
 
     // reserve output buffer
-    // TODO: move to batch manager?
     if (output_reserve(n_outputs_all) < n_outputs_all) {
         LLAMA_LOG_ERROR("%s: could not reserve space for batch with %" PRId64 " outputs\n", __func__, n_outputs_all);
         return -2;
