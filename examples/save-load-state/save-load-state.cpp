@@ -15,7 +15,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    print_build_info();
+    common_init();
 
     if (params.n_predict < 0) {
         params.n_predict = 16;

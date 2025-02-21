@@ -180,6 +180,8 @@ llama_context::llama_context(
 llama_context::~llama_context() = default;
 
 void llama_context::init() {
+    LLAMA_LOG_DEBUG("%s: call\n", __func__);
+
     const auto & hparams = model.hparams;
 
     if (hparams.vocab_only) {
@@ -188,13 +190,15 @@ void llama_context::init() {
     }
 
     {
-        // buffer types used for the compute buffer of each backend
+        LLAMA_LOG_DEBUG("%s: enumerating backends\n", __func__);
+
         backend_buft.clear();
         backend_ptrs.clear();
 
         for (auto & backend : backends) {
             auto * buft = ggml_backend_get_default_buffer_type(backend.get());
             auto backend_type = ggml_backend_dev_type(ggml_backend_get_device(backend.get()));
+
             if (backend_type == GGML_BACKEND_DEVICE_TYPE_CPU && !model.devices.empty()) {
                 // use the host buffer of the first device CPU for faster transfer of the intermediate state
                 auto * dev = model.devices[0];
@@ -203,14 +207,18 @@ void llama_context::init() {
                     buft = host_buft;
                 }
             }
+
             backend_buft.push_back(buft);
             backend_ptrs.push_back(backend.get());
         }
 
+        LLAMA_LOG_DEBUG("%s: backend_ptrs.size() = %zu\n", __func__, backend_ptrs.size());
+
         const size_t max_nodes = this->max_nodes();
 
+        LLAMA_LOG_DEBUG("%s: max_nodes = %zu\n", __func__, max_nodes);
+
         // buffer used to store the computation graph and the tensor meta data
-        // TODO: move to base class
         buf_compute_meta.resize(ggml_tensor_overhead()*max_nodes + ggml_graph_overhead_custom(max_nodes, false));
 
         // TODO: move these checks to ggml_backend_sched
@@ -246,6 +254,8 @@ void llama_context::init() {
             LLAMA_LOG_INFO("%s: pipeline parallelism enabled (n_copies=%d)\n", __func__, ggml_backend_sched_get_n_copies(sched.get()));
         }
     }
+
+    LLAMA_LOG_DEBUG("%s: calling reserve()\n", __func__);
 
     reserve();
 }
@@ -286,14 +296,16 @@ void llama_context::reserve() {
 
     llama_token token = model.vocab.token_bos(); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
 
+    // max number of outputs
+    n_outputs = n_tokens;
+
+    LLAMA_LOG_DEBUG("%s: n_tokens = %d, n_seqs = %d, n_outputs = %d\n", __func__, n_tokens, n_seqs, n_outputs);
+
     int n_splits_pp = -1;
     int n_nodes_pp  = -1;
 
     int n_splits_tg = -1;
     int n_nodes_tg  = -1;
-
-    // max number of outputs
-    n_outputs = n_tokens;
 
     // reserve pp graph first so that buffers are only allocated once
     {
@@ -521,21 +533,29 @@ int64_t llama_context::n_pos_per_token() const {
 void llama_context::attach_threadpool(
            ggml_threadpool_t threadpool,
            ggml_threadpool_t threadpool_batch) {
+    LLAMA_LOG_DEBUG("%s: call\n", __func__);
+
     this->threadpool       = threadpool;
     this->threadpool_batch = threadpool_batch ? threadpool_batch : threadpool;
 }
 
 void llama_context::detach_threadpool() {
+    LLAMA_LOG_DEBUG("%s: call\n", __func__);
+
     this->threadpool       = nullptr;
     this->threadpool_batch = nullptr;
 }
 
 void llama_context::set_n_threads(int32_t n_threads, int32_t n_threads_batch) {
+    LLAMA_LOG_DEBUG("%s: n_threads = %d, n_threads_batch = %d\n", __func__, n_threads, n_threads_batch);
+
     cparams.n_threads       = n_threads;
     cparams.n_threads_batch = n_threads_batch;
 }
 
 void llama_context::set_abort_callback(bool (*abort_callback)(void * data), void * abort_callback_data) {
+    LLAMA_LOG_DEBUG("%s: call\n", __func__);
+
     this->abort_callback      = abort_callback;
     this->abort_callback_data = abort_callback_data;
 
@@ -549,21 +569,29 @@ void llama_context::set_abort_callback(bool (*abort_callback)(void * data), void
 }
 
 void llama_context::set_embeddings(bool value) {
+    LLAMA_LOG_DEBUG("%s: value = %d\n", __func__, value);
+
     cparams.embeddings = value;
 }
 
 void llama_context::set_causal_attn(bool value) {
+    LLAMA_LOG_DEBUG("%s: value = %d\n", __func__, value);
+
     cparams.causal_attn = value;
 }
 
 void llama_context::set_adapter_lora(
-            struct llama_adapter_lora * adapter,
+            llama_adapter_lora * adapter,
             float scale) {
+    LLAMA_LOG_DEBUG("%s: adapter = %p, scale = %f\n", __func__, (void *) adapter, scale);
+
     loras[adapter] = scale;
 }
 
 bool llama_context::rm_adapter_lora(
-            struct llama_adapter_lora * adapter) {
+            llama_adapter_lora * adapter) {
+    LLAMA_LOG_DEBUG("%s: adapter = %p\n", __func__, (void *) adapter);
+
     auto pos = loras.find(adapter);
     if (pos != loras.end()) {
         loras.erase(pos);
@@ -574,6 +602,8 @@ bool llama_context::rm_adapter_lora(
 }
 
 void llama_context::clear_adapter_lora() {
+    LLAMA_LOG_DEBUG("%s: call\n", __func__);
+
     loras.clear();
 }
 
@@ -583,6 +613,8 @@ bool llama_context::apply_adapter_cvec(
                 int32_t   n_embd,
                 int32_t   il_start,
                 int32_t   il_end) {
+    LLAMA_LOG_DEBUG("%s: il_start = %d, il_end = %d\n", __func__, il_start, il_end);
+
     return cvec.apply(model, data, len, n_embd, il_start, il_end);
 }
 
@@ -2085,8 +2117,12 @@ size_t llama_context::state_seq_save_file(llama_seq_id seq_id, const char * file
 }
 
 size_t llama_context::state_get_data(llama_io_write_i & io) {
+    LLAMA_LOG_DEBUG("%s: writing state\n", __func__);
+
     // write model info
     {
+        LLAMA_LOG_DEBUG("%s: - writing model info\n", __func__);
+
         const std::string arch_str = llm_arch_name(model.arch);
         io.write_string(arch_str);
         // TODO: add more model-specific info which should prevent loading the session file if not identical
@@ -2094,6 +2130,8 @@ size_t llama_context::state_get_data(llama_io_write_i & io) {
 
     // write output ids
     {
+        LLAMA_LOG_DEBUG("%s: - writing output ids\n", __func__);
+
         output_reorder();
 
         const auto n_outputs    = this->n_outputs;
@@ -2124,6 +2162,8 @@ size_t llama_context::state_get_data(llama_io_write_i & io) {
 
     // write logits
     {
+        LLAMA_LOG_DEBUG("%s: - writing logits\n", __func__);
+
         const uint64_t logits_size = std::min((uint64_t) this->logits_size, (uint64_t) n_outputs * model.vocab.n_tokens());
 
         io.write(&logits_size, sizeof(logits_size));
@@ -2135,6 +2175,8 @@ size_t llama_context::state_get_data(llama_io_write_i & io) {
 
     // write embeddings
     {
+        LLAMA_LOG_DEBUG("%s: - writing embeddings\n", __func__);
+
         const uint64_t embd_size = std::min((uint64_t) this->embd_size, (uint64_t) n_outputs * model.hparams.n_embd);
 
         io.write(&embd_size, sizeof(embd_size));
@@ -2148,8 +2190,12 @@ size_t llama_context::state_get_data(llama_io_write_i & io) {
 }
 
 size_t llama_context::state_set_data(llama_io_read_i & io) {
+    LLAMA_LOG_DEBUG("%s: reading state\n", __func__);
+
     // read model info
     {
+        LLAMA_LOG_DEBUG("%s: - reading model info\n", __func__);
+
         const std::string cur_arch_str = llm_arch_name(model.arch);
 
         std::string arch_str;
@@ -2162,6 +2208,8 @@ size_t llama_context::state_set_data(llama_io_read_i & io) {
 
     // read output ids
     {
+        LLAMA_LOG_DEBUG("%s: - reading output ids\n", __func__);
+
         auto n_outputs = this->n_outputs;
         io.read_to(&n_outputs, sizeof(n_outputs));
 
@@ -2189,6 +2237,8 @@ size_t llama_context::state_set_data(llama_io_read_i & io) {
 
     // read logits
     {
+        LLAMA_LOG_DEBUG("%s: - reading logits\n", __func__);
+
         uint64_t logits_size;
         io.read_to(&logits_size, sizeof(logits_size));
 
@@ -2203,6 +2253,8 @@ size_t llama_context::state_set_data(llama_io_read_i & io) {
 
     // read embeddings
     {
+        LLAMA_LOG_DEBUG("%s: - reading embeddings\n", __func__);
+
         uint64_t embd_size;
         io.read_to(&embd_size, sizeof(embd_size));
 
@@ -2285,6 +2337,8 @@ void llama_context_kv_self::reserve() {
     // simulate full KV cache
     kv_self.n = kv_self.size;
 
+    LLAMA_LOG_DEBUG("%s: kv_self.n = %u\n", __func__, kv_self.n);
+
     llama_context::reserve();
 }
 
@@ -2297,6 +2351,8 @@ const llama_kv_cache * llama_context_kv_self::get_kv_self() const {
 }
 
 void llama_context_kv_self::kv_self_update() {
+    LLAMA_LOG_DEBUG("%s: kv_self_update()\n", __func__);
+
     auto & kv = kv_self;
 
     bool need_reserve = false;
@@ -2305,6 +2361,8 @@ void llama_context_kv_self::kv_self_update() {
         if (!kv.can_shift) {
             GGML_ABORT("The current context does not support K-shift");
         }
+
+        LLAMA_LOG_DEBUG("%s: applying K-shift\n", __func__);
 
         // apply K-shift if needed
         if (model.hparams.rope_type != LLAMA_ROPE_TYPE_NONE) {
@@ -2334,6 +2392,8 @@ void llama_context_kv_self::kv_self_update() {
 
     // defragment the KV cache if needed
     if (kv.do_defrag) {
+        LLAMA_LOG_DEBUG("%s: defragmenting KV cache\n", __func__);
+
         ggml_backend_sched_reset(sched.get());
 
         auto * gf = graph_init();
@@ -3667,6 +3727,7 @@ ggml_tensor * llama_context_kv_self::build_inp_kq_mask_cross(
 size_t llama_context_kv_self::state_get_data(llama_io_write_i & io) {
     llama_context::state_get_data(io);
 
+    LLAMA_LOG_DEBUG("%s: - writing KV self\n", __func__);
     kv_self.state_write(io);
 
     return io.n_bytes();
@@ -3675,6 +3736,7 @@ size_t llama_context_kv_self::state_get_data(llama_io_write_i & io) {
 size_t llama_context_kv_self::state_set_data(llama_io_read_i & io) {
     llama_context::state_set_data(io);
 
+    LLAMA_LOG_DEBUG("%s: - reading KV self\n", __func__);
     kv_self.state_read(io);
 
     return io.n_bytes();

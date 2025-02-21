@@ -55,11 +55,13 @@ public:
 
     virtual int32_t max_nodes() const;
 
-    // returns nullptr
+    // self-attention:
+
+    // if the context does not have a KV cache, return nullptr
     virtual       llama_kv_cache * get_kv_self();
     virtual const llama_kv_cache * get_kv_self() const;
 
-    // noop
+    // if the context does not have a KV cache, noop
     virtual void kv_self_update();
 
     virtual enum llama_pooling_type pooling_type() const;
@@ -87,11 +89,11 @@ public:
     virtual void set_causal_attn(bool value);
 
     virtual void set_adapter_lora(
-            struct llama_adapter_lora * adapter,
+            llama_adapter_lora * adapter,
             float scale);
 
     virtual bool rm_adapter_lora(
-            struct llama_adapter_lora * adapter);
+            llama_adapter_lora * adapter);
 
     virtual void clear_adapter_lora();
 
