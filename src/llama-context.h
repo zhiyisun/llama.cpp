@@ -525,6 +525,12 @@ public:
                     bool   worst_case) override;
 
 protected:
+    virtual size_t state_get_data(llama_io_write_i & io) override;
+    virtual size_t state_set_data(llama_io_read_i  & io) override;
+
+    virtual size_t state_seq_get_data(llama_io_write_i & io, llama_seq_id seq_id) override;
+    virtual size_t state_seq_set_data(llama_io_read_i  & io, llama_seq_id seq_id) override;
+
     virtual void input_set(const llama_ubatch & ubatch) override;
 
     // TODO: change name to something more meaningful -- does "KV cache" make sense for recurrent models?
