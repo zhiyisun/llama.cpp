@@ -69,9 +69,7 @@ public:
                  int32_t   n_tokens) = 0;
 
     virtual ggml_tensor * build_inp_out_ids(
-            ggml_context * ctx0,
-                 int32_t   n_tokens,
-                    bool   worst_case) = 0;
+            ggml_context * ctx0) = 0;
 
     virtual ggml_tensor * build_inp_mean(
             ggml_context * ctx0,
@@ -85,8 +83,7 @@ public:
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
-                    bool   swa,
-                    bool   worst_case) = 0;
+                    bool   swa) = 0;
 
     virtual ggml_tensor * build_attn(
             ggml_context * ctx0,
@@ -98,8 +95,7 @@ public:
              ggml_tensor * v_cur,
                  int32_t   n_tokens,
                  float     kq_scale,
-                 int       il,
-                 bool      worst_case);
+                 int       il);
 
     virtual void build_kv_self_shift(
             ggml_context * ctx0,
@@ -114,22 +110,17 @@ public:
             ggml_context * ctx0);
 
     virtual ggml_tensor * build_inp_embd_enc(
-            ggml_context * ctx0,
-                 int32_t   n_tokens,
-                    bool   worst_case);
+            ggml_context * ctx0);
 
     virtual ggml_tensor * build_inp_kq_mask_cross(
             ggml_context * ctx0,
-                 int32_t   n_tokens,
-                    bool   worst_case);
+                 int32_t   n_tokens);
 
     virtual ggml_tensor * build_inp_s_copy(
-            ggml_context * ctx0,
-                    bool   worst_case);
+            ggml_context * ctx0);
 
     virtual ggml_tensor * build_inp_s_mask(
-            ggml_context * ctx0,
-                    bool   worst_case);
+            ggml_context * ctx0);
 
     virtual ggml_tensor * build_copy_mask_state(
             ggml_context * ctx0,
@@ -137,10 +128,8 @@ public:
              ggml_tensor * s,
              ggml_tensor * state_copy,
              ggml_tensor * state_mask,
-                 int32_t   n_tokens,
                  int32_t   n_state,
-                 int32_t   n_seqs,
-                    bool   worst_case);
+                 int32_t   n_seqs);
 
     virtual ggml_tensor * build_mamba_layer(
             ggml_context * ctx0,
@@ -149,8 +138,7 @@ public:
              ggml_tensor * state_copy,
              ggml_tensor * state_mask,
       const llama_ubatch & ubatch,
-                     int   il,
-                    bool   worst_case);
+                     int   il);
 
     virtual ggml_tensor * build_rwkv_token_shift_load(
             ggml_context * ctx0,
@@ -158,15 +146,13 @@ public:
              ggml_tensor * state_copy,
              ggml_tensor * state_mask,
       const llama_ubatch & ubatch,
-                     int   il,
-                    bool   worst_case);
+                     int   il);
 
     virtual ggml_tensor * build_rwkv_token_shift_store(
             ggml_context * ctx0,
              ggml_tensor * token_shift,
       const llama_ubatch & ubatch,
-                     int   il,
-                    bool   worst_case);
+                     int   il);
 
     virtual ggml_tensor * build_rwkv6_time_mix(
             ggml_context * ctx0,
@@ -176,6 +162,5 @@ public:
              ggml_tensor * state_copy,
              ggml_tensor * state_mask,
       const llama_ubatch & ubatch,
-                     int   il,
-                    bool   worst_case);
+                     int   il);
 };

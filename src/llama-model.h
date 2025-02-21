@@ -374,8 +374,7 @@ struct llama_model {
                ggml_cgraph * gf,
              llama_graph_i * lgf,
        const llama_cparams & cparams,
-       const llama_ubatch  & ubatch,
-                      bool   worst_case) const;
+       const llama_ubatch  & ubatch) const;
 
 private:
     struct impl;

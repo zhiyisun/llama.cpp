@@ -3834,7 +3834,6 @@ struct llm_build_context {
     const int32_t n_tokens;
     const int32_t n_ctx_orig;
 
-    const bool worst_case;
     const bool flash_attn;
 
     const enum llama_pooling_type pooling_type;
@@ -3851,8 +3850,7 @@ struct llm_build_context {
             llama_graph_i * lgf,
       const llama_model   & model,
       const llama_cparams & cparams,
-      const llama_ubatch  & ubatch,
-            bool            worst_case) :
+      const llama_ubatch  & ubatch) :
         model            (model),
         hparams          (model.hparams),
         cparams          (cparams),
@@ -3879,7 +3877,6 @@ struct llm_build_context {
         norm_rms_eps     (hparams.f_norm_rms_eps),
         n_tokens         (ubatch.n_tokens),
         n_ctx_orig       (cparams.n_ctx_orig_yarn),
-        worst_case       (worst_case),
         flash_attn       (cparams.flash_attn),
         pooling_type     (cparams.pooling_type),
         rope_type        (hparams.rope_type),
@@ -3910,7 +3907,7 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_inp_out_ids() {
-        ggml_tensor * cur = lgf->build_inp_out_ids(ctx0, n_tokens, worst_case);
+        ggml_tensor * cur = lgf->build_inp_out_ids(ctx0);
         cb(cur, "inp_out_ids", -1);
 
         return cur;
@@ -3949,7 +3946,7 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_inp_embd_enc() {
-        ggml_tensor * cur = lgf->build_inp_embd_enc(ctx0, n_tokens, worst_case);
+        ggml_tensor * cur = lgf->build_inp_embd_enc(ctx0);
         cb(cur, "embd_enc", -1);
 
         return cur;
@@ -3957,7 +3954,7 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_inp_kq_mask_cross() {
-        ggml_tensor * cur = lgf->build_inp_kq_mask_cross(ctx0, n_tokens, worst_case);
+        ggml_tensor * cur = lgf->build_inp_kq_mask_cross(ctx0, n_tokens);
         cb(cur, "KQ_mask_cross", -1);
 
         return cur;
@@ -4258,7 +4255,7 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, k_cur);
         ggml_build_forward_expand(gf, v_cur);
 
-        ggml_tensor * cur = lgf->build_attn(ctx0, gf, wo, wo_b, q_cur, k_cur, v_cur, n_tokens, kq_scale, il, worst_case);
+        ggml_tensor * cur = lgf->build_attn(ctx0, gf, wo, wo_b, q_cur, k_cur, v_cur, n_tokens, kq_scale, il);
         cb(cur, "kqv_out", il);
 
         return cur;
@@ -4405,7 +4402,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
         for (int il = 0; il < n_layer; ++il) {
@@ -4566,7 +4563,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
         for (int il = 0; il < n_layer; ++il) {
@@ -4722,7 +4719,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = model.type == LLM_TYPE_7B ? build_inp_pos() : nullptr;
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -4838,7 +4835,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -4943,7 +4940,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * attn_norm;
@@ -5066,7 +5063,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5218,7 +5215,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5340,7 +5337,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         struct ggml_tensor * pos = ggml_get_rows(ctx0, model.pos_embd, inp_pos);
         cb(pos, "pos_embd", -1);
@@ -5441,7 +5438,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5555,7 +5552,7 @@ struct llm_build_context {
         inpL = build_norm(inpL, model.tok_norm, model.tok_norm_b, LLM_NORM, -1);
         cb(inpL, "inp_norm", -1);
 
-        lgf->build_attn_inp(ctx0, n_tokens, false, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, false, false);
 
         // iterate layers
         for (int il = 0; il < n_layer; ++il) {
@@ -5700,7 +5697,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         inpL = build_norm(inpL,
                 model.tok_norm,
@@ -5803,7 +5800,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         if (model.pos_embd) {
             // inp_pos - contains the positions
@@ -5945,7 +5942,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
 
@@ -6096,7 +6093,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -6210,7 +6207,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -6323,7 +6320,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         int sections[4];
         std::copy(std::begin(hparams.rope_sections), std::begin(hparams.rope_sections) + 4, sections);
@@ -6441,7 +6438,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -6588,7 +6585,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             attn_norm_output = build_norm(inpL,
@@ -6711,7 +6708,7 @@ struct llm_build_context {
         struct ggml_tensor * inp_pos = build_inp_pos();
 
         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
-        lgf->build_attn_inp(ctx0, n_tokens, true, true, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, true);
 
         for (int il = 0; il < n_layer; ++il) {
             auto * residual = inpL;
@@ -6855,7 +6852,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
 
@@ -6961,7 +6958,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         pos = ggml_get_rows(ctx0, model.pos_embd, inp_pos);
         cb(pos, "pos_embd", -1);
@@ -7067,7 +7064,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             cur = build_norm(inpL,
@@ -7178,7 +7175,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7297,7 +7294,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7425,7 +7422,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7626,7 +7623,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             // norm
@@ -7734,7 +7731,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, true, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, true);
 
         for (int il = 0; il < n_layer; ++il) {
             // norm
@@ -7864,7 +7861,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7977,8 +7974,8 @@ struct llm_build_context {
         // {n_embd, n_tokens}
         inpL = build_inp_embd(model.tok_embd);
 
-        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(ctx0, worst_case);
-        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(ctx0, worst_case);
+        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(ctx0);
+        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(ctx0);
 
         for (int il = 0; il < n_layer; ++il) {
             // norm
@@ -7988,7 +7985,7 @@ struct llm_build_context {
             cb(cur, "attn_norm", il);
 
             //cur = build_mamba_layer(gf, cur, state_copy, state_mask, il);
-            cur = lgf->build_mamba_layer(ctx0, gf, cur, state_copy, state_mask, ubatch, il, worst_case);
+            cur = lgf->build_mamba_layer(ctx0, gf, cur, state_copy, state_mask, ubatch, il);
 
             if (il == n_layer - 1) {
                 // skip computing output for unused tokens
@@ -8039,7 +8036,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
 
@@ -8187,7 +8184,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, true, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, true);
 
         // sliding window switch pattern
         const int32_t sliding_window_pattern = 4;
@@ -8322,7 +8319,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8442,7 +8439,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8566,7 +8563,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8687,7 +8684,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             const int64_t n_head    = hparams.n_head(il);
@@ -8815,7 +8812,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             cur = build_norm(inpL,
@@ -8959,7 +8956,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9089,7 +9086,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
 
@@ -9252,7 +9249,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9470,7 +9467,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9951,7 +9948,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             cur = build_norm(inpL,
@@ -10045,7 +10042,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10175,7 +10172,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10296,7 +10293,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10414,8 +10411,8 @@ struct llm_build_context {
         inpL = build_inp_embd(model.tok_embd);
         inpL = build_norm(inpL, model.tok_norm, model.tok_norm_b, LLM_NORM, -1);
 
-        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(ctx0, worst_case);
-        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(ctx0, worst_case);
+        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(ctx0);
+        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(ctx0);
 
         const auto n_embd = hparams.n_embd;
         const auto n_seq_tokens = ubatch.n_seq_tokens;
@@ -10425,7 +10422,7 @@ struct llm_build_context {
             const llama_layer * layer = &model.layers[il];
 
             struct ggml_tensor * token_shift = lgf->build_rwkv_token_shift_load(
-                ctx0, gf, state_copy, state_mask, ubatch, il, worst_case
+                ctx0, gf, state_copy, state_mask, ubatch, il
             );
 
             struct ggml_tensor * att_shift = ggml_view_3d(ctx0, token_shift, n_embd, 1, n_seqs, token_shift->nb[1], token_shift->nb[2], 0);
@@ -10441,7 +10438,7 @@ struct llm_build_context {
                 1
             );
 
-            cur = lgf->build_rwkv6_time_mix(ctx0, gf, att_norm, x_prev, state_copy, state_mask, ubatch, il, worst_case);
+            cur = lgf->build_rwkv6_time_mix(ctx0, gf, att_norm, x_prev, state_copy, state_mask, ubatch, il);
 
             struct ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpL);
             cb(ffn_inp, "ffn_inp", il);
@@ -10464,7 +10461,7 @@ struct llm_build_context {
                 ggml_view_3d(ctx0, ffn_norm, n_embd, 1, n_seqs, ffn_norm->nb[1], ffn_norm->nb[2], (n_seq_tokens-1)*n_embd*ggml_element_size(ffn_norm)),
                 1
             );
-            ggml_build_forward_expand(gf, lgf->build_rwkv_token_shift_store(ctx0, token_shift, ubatch, il, worst_case));
+            ggml_build_forward_expand(gf, lgf->build_rwkv_token_shift_store(ctx0, token_shift, ubatch, il));
 
             if (hparams.rescale_every_n_layers != 0 && (il + 1) % hparams.rescale_every_n_layers == 0) {
                 cur = ggml_scale(ctx0, cur, 0.5F);
@@ -10506,8 +10503,8 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(ctx0, worst_case);
-        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(ctx0, worst_case);
+        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(ctx0);
+        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(ctx0);
 
         const auto n_embd = hparams.n_embd;
         const auto n_seq_tokens = ubatch.n_seq_tokens;
@@ -10519,7 +10516,7 @@ struct llm_build_context {
             const llama_layer * layer = &model.layers[il];
 
             struct ggml_tensor * token_shift = lgf->build_rwkv_token_shift_load(
-                ctx0, gf, state_copy, state_mask, ubatch, il, worst_case
+                ctx0, gf, state_copy, state_mask, ubatch, il
             );
 
             struct ggml_tensor * att_norm = build_norm(inpL, layer->attn_norm, layer->attn_norm_b, LLM_NORM_RMS, il);
@@ -10532,10 +10529,10 @@ struct llm_build_context {
                 1
             );
 
-            cur = lgf->build_rwkv6_time_mix(ctx0, gf, att_norm, x_prev, state_copy, state_mask, ubatch, il, worst_case);
+            cur = lgf->build_rwkv6_time_mix(ctx0, gf, att_norm, x_prev, state_copy, state_mask, ubatch, il);
 
             token_shift = ggml_view_3d(ctx0, att_norm, n_embd, 1, n_seqs, att_norm->nb[1], att_norm->nb[2], (n_seq_tokens-1)*n_embd*ggml_element_size(att_norm));
-            ggml_build_forward_expand(gf, lgf->build_rwkv_token_shift_store(ctx0, token_shift, ubatch, il, worst_case));
+            ggml_build_forward_expand(gf, lgf->build_rwkv_token_shift_store(ctx0, token_shift, ubatch, il));
 
             struct ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpL);
             cb(ffn_inp, "ffn_inp", il);
@@ -10601,7 +10598,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false, worst_case);
+        lgf->build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10912,9 +10909,8 @@ llama_graph_result llama_model::build_graph(
            ggml_cgraph * gf,
          llama_graph_i * lgf,
    const llama_cparams & cparams,
-   const llama_ubatch  & ubatch,
-                  bool   worst_case) const {
-    struct llm_build_context llm(ctx, lgf, *this, cparams, ubatch, worst_case);
+   const llama_ubatch  & ubatch) const {
+    struct llm_build_context llm(ctx, lgf, *this, cparams, ubatch);
 
     switch (arch) {
         case LLM_ARCH_LLAMA:

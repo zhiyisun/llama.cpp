@@ -610,6 +610,7 @@ struct llama_kv_cache_slot_info llama_kv_cache::find_slot(
         // sanity check
         return llama_kv_cache_slot_info(n >= n_seqs);
     }
+
     // otherwise, one cell per token.
 
     if (n_tokens > size) {
