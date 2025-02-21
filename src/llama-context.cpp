@@ -16,8 +16,10 @@
 
 llama_context::llama_context(
         const llama_model & model,
-        const llama_context_params & params) :
-    model     (model) {
+        const llama_context_params & params,
+              llama_graph_type gtype) :
+    llama_graph_i(gtype),
+    model(model) {
     LLAMA_LOG_INFO("%s: constructing llama_context\n", __func__);
 
     t_start_us = model.t_start_us;
@@ -2279,8 +2281,9 @@ size_t llama_context::state_seq_set_data(llama_io_read_i & io, llama_seq_id seq_
 
 llama_context_kv_self::llama_context_kv_self(
         const llama_model & model,
-        const llama_context_params & params) :
-    llama_context(model, params),
+        const llama_context_params & params,
+              llama_graph_type gtype) :
+    llama_context(model, params, gtype),
     kv_self(model.hparams) {
     LLAMA_LOG_INFO("%s: constructing llama_context_kv_self\n", __func__);
 
@@ -3750,8 +3753,9 @@ size_t llama_context_kv_self::state_seq_set_data(llama_io_read_i & io, llama_seq
 
 llama_context_recurrent::llama_context_recurrent(
         const llama_model & model,
-        const llama_context_params & params) :
-    llama_context(model, params),
+        const llama_context_params & params,
+              llama_graph_type gtype) :
+    llama_context(model, params, gtype),
     kv_self(model.hparams) {
     LLAMA_LOG_INFO("%s: constructing llama_context_recurrent\n", __func__);
 
@@ -4617,6 +4621,22 @@ size_t llama_context_recurrent::state_seq_set_data(llama_io_read_i & io, llama_s
     kv_self.state_read(io, seq_id);
 
     return io.n_bytes();
+}
+
+//
+// llama_context_enc_dec
+//
+
+llama_context_enc_dec::llama_context_enc_dec(
+        const llama_model & model,
+        const llama_context_params & params) :
+    llama_context(model, params, LLAMA_GRAPH_TYPE_ENCODER),
+    ctx_dec(model, params, LLAMA_GRAPH_TYPE_DECODER) {
+    LLAMA_LOG_INFO("%s: constructing llama_context_enc_dec\n", __func__);
+}
+
+llama_context_enc_dec::~llama_context_enc_dec() {
+    LLAMA_LOG_INFO("%s: destructing llama_context_enc_dec\n", __func__);
 }
 
 //

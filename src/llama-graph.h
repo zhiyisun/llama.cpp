@@ -11,6 +11,12 @@ struct ggml_tensor;
 struct ggml_backend_buffer;
 struct llama_ubatch;
 
+enum llama_graph_type {
+    LLAMA_GRAPH_TYPE_DEFAULT,
+    LLAMA_GRAPH_TYPE_ENCODER,
+    LLAMA_GRAPH_TYPE_DECODER,
+};
+
 struct llama_graph_result {
     // important graph nodes
     ggml_tensor * t_logits      = nullptr;
@@ -20,6 +26,15 @@ struct llama_graph_result {
 
 // TODO: can become more granular in the future
 class llama_graph_i {
+public:
+    llama_graph_i(llama_graph_type type);
+    virtual ~llama_graph_i() = default;
+
+    llama_graph_type get_type() const { return type; }
+
+protected:
+    llama_graph_type type;
+
 public:
     // callback that allows us to apply custom logic to each tensor (e.g. ggml-alloc, offloading, etc.)
     virtual void build_cb(

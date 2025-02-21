@@ -5,8 +5,6 @@
 #include "llama-hparams.h"
 #include "llama-vocab.h"
 
-#include "ggml-cpp.h"
-
 #include <memory>
 #include <string>
 #include <unordered_map>

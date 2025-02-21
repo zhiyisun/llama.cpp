@@ -2,6 +2,8 @@
 
 #include "llama-impl.h"
 
+llama_graph_i::llama_graph_i(llama_graph_type type) : type(type) {}
+
 ggml_tensor * llama_graph_i::build_attn(
         ggml_context * ctx0,
          ggml_cgraph * gf,

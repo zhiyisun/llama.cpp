@@ -331,17 +331,20 @@ struct llama_context * llama_init_from_model(
             case LLM_ARCH_BERT:
             case LLM_ARCH_JINA_BERT_V2:
             case LLM_ARCH_NOMIC_BERT:
-                ctx = new llama_context(*model, params);
+                ctx = new llama_context_enc(*model, params, LLAMA_GRAPH_TYPE_DEFAULT);
+                break;
+            case LLM_ARCH_T5:
+                ctx = new llama_context_enc_dec(*model, params);
                 break;
             case LLM_ARCH_RWKV6:
             case LLM_ARCH_RWKV6QWEN2:
             case LLM_ARCH_MAMBA:
                 GGML_ASSERT(llama_model_is_recurrent(model));
-                ctx = new llama_context_recurrent(*model, params);
+                ctx = new llama_context_recurrent(*model, params, LLAMA_GRAPH_TYPE_DEFAULT);
                 break;
             default:
                 GGML_ASSERT(!llama_model_is_recurrent(model));
-                ctx = new llama_context_kv_self(*model, params);
+                ctx = new llama_context_kv_self(*model, params, LLAMA_GRAPH_TYPE_DEFAULT);
         };
 
         ctx->init();
