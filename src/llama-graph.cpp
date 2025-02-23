@@ -12,6 +12,7 @@ ggml_tensor * llama_graph_i::build_attn(
          ggml_tensor * q_cur,
          ggml_tensor * k_cur,
          ggml_tensor * v_cur,
+         ggml_tensor * kq_b,
              int32_t   n_tokens,
              float     kq_scale,
              int       il) {
@@ -22,6 +23,7 @@ ggml_tensor * llama_graph_i::build_attn(
     GGML_UNUSED(q_cur);
     GGML_UNUSED(k_cur);
     GGML_UNUSED(v_cur);
+    GGML_UNUSED(kq_b);
     GGML_UNUSED(n_tokens);
     GGML_UNUSED(kq_scale);
     GGML_UNUSED(il);

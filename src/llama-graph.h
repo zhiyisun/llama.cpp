@@ -83,6 +83,10 @@ public:
             ggml_context * ctx0,
                  int32_t   n_tokens) = 0;
 
+    virtual ggml_tensor * build_inp_pos_bucket(
+            ggml_context * ctx0,
+                 int32_t   n_tokens) = 0;
+
     virtual ggml_tensor * build_inp_out_ids(
             ggml_context * ctx0) = 0;
 
@@ -108,6 +112,7 @@ public:
              ggml_tensor * q_cur,
              ggml_tensor * k_cur,
              ggml_tensor * v_cur,
+             ggml_tensor * kq_b,
                  int32_t   n_tokens,
                  float     kq_scale,
                  int       il);

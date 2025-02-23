@@ -1432,7 +1432,10 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
             // skip unused tensors
             if (info.op == GGML_OP_NONE) {
-                LLAMA_LOG_WARN("model has unused tensor %s -- ignoring\n", tn.str().c_str());
+                const size_t nbytes = ggml_nbytes(t_meta);
+                LLAMA_LOG_WARN("model has unused tensor %s (size = %zu bytes) -- ignoring\n", tn.str().c_str(), nbytes);
+
+                ml.size_data -= nbytes;
                 ml.n_created++;
 
                 return nullptr;
@@ -3953,6 +3956,14 @@ struct llm_build_context {
     }
 
     // TODO: tmp
+    struct ggml_tensor * build_pos_bucket() {
+        ggml_tensor * cur = lgf->build_inp_pos_bucket(ctx0, n_tokens);
+        cb(cur, "pos_bucket", -1);
+
+        return cur;
+    }
+
+    // TODO: tmp
     struct ggml_tensor * build_inp_embd_enc() {
         ggml_tensor * cur = lgf->build_inp_embd_enc(ctx0);
         cb(cur, "embd_enc", -1);
@@ -4263,7 +4274,30 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, k_cur);
         ggml_build_forward_expand(gf, v_cur);
 
-        ggml_tensor * cur = lgf->build_attn(ctx0, gf, wo, wo_b, q_cur, k_cur, v_cur, n_tokens, kq_scale, il);
+        ggml_tensor * cur = lgf->build_attn(ctx0, gf, wo, wo_b, q_cur, k_cur, v_cur, nullptr, n_tokens, kq_scale, il);
+        cb(cur, "kqv_out", il);
+
+        return cur;
+    }
+
+    struct ggml_tensor * build_attn_with_kq_b(
+             struct ggml_cgraph * gf,
+             struct ggml_tensor * wo,
+             struct ggml_tensor * wo_b,
+             struct ggml_tensor * q_cur,
+             struct ggml_tensor * k_cur,
+             struct ggml_tensor * v_cur,
+             struct ggml_tensor * kq_b,
+                        int32_t   n_tokens,
+                        float     kq_scale,
+                        int       il) {
+        // these nodes are added to the graph together so that they are not reordered
+        // by doing so, the number of splits in the graph is reduced
+        ggml_build_forward_expand(gf, q_cur);
+        ggml_build_forward_expand(gf, k_cur);
+        ggml_build_forward_expand(gf, v_cur);
+
+        ggml_tensor * cur = lgf->build_attn(ctx0, gf, wo, wo_b, q_cur, k_cur, v_cur, kq_b, n_tokens, kq_scale, il);
         cb(cur, "kqv_out", il);
 
         return cur;
@@ -4364,37 +4398,24 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, cur);
     }
 
-    //struct ggml_tensor * build_pos_bucket(bool causal) {
-    //    if (causal) {
-    //        lctx.inp_pos_bucket = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_kv,     n_tokens);
-    //    } else {
-    //        lctx.inp_pos_bucket = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_tokens, n_tokens);
-    //    }
+    struct ggml_tensor * build_pos_bias(struct ggml_tensor * pos_bucket, struct ggml_tensor * attn_rel_b) {
+        struct ggml_tensor * pos_bucket_1d = ggml_reshape_1d(ctx0, pos_bucket, pos_bucket->ne[0] * pos_bucket->ne[1]);
+        cb(pos_bucket_1d, "pos_bucket_1d", -1);
 
-    //    ggml_set_input(lctx.inp_pos_bucket);
-    //    cb(lctx.inp_pos_bucket, "pos_bucket", -1);
+        struct ggml_tensor * pos_bias = ggml_get_rows(ctx0, attn_rel_b, pos_bucket_1d);
+        cb(pos_bias, "pos_bias", -1);
 
-    //    return lctx.inp_pos_bucket;
-    //}
+        pos_bias = ggml_reshape_3d(ctx0, pos_bias, pos_bias->ne[0], pos_bucket->ne[0], pos_bucket->ne[1]);
+        cb(pos_bias, "pos_bias", -1);
 
-    //struct ggml_tensor * build_pos_bias(struct ggml_tensor * pos_bucket, struct ggml_tensor * attn_rel_b) {
-    //    struct ggml_tensor * pos_bucket_1d = ggml_view_1d(ctx0, pos_bucket, pos_bucket->ne[0] * pos_bucket->ne[1], 0);
-    //    cb(pos_bucket_1d, "pos_bucket_1d", -1);
+        pos_bias = ggml_permute(ctx0, pos_bias, 2, 0, 1, 3);
+        cb(pos_bias, "pos_bias", -1);
 
-    //    struct ggml_tensor * pos_bias = ggml_get_rows(ctx0, attn_rel_b, pos_bucket_1d);
-    //    cb(pos_bias, "pos_bias", -1);
+        pos_bias = ggml_cont(ctx0, pos_bias);
+        cb(pos_bias, "pos_bias", -1);
 
-    //    pos_bias = ggml_view_3d(ctx0, pos_bias, pos_bias->ne[0], lctx.inp_pos_bucket->ne[0], lctx.inp_pos_bucket->ne[1], ggml_element_size(pos_bias) * pos_bias->ne[0], ggml_element_size(pos_bias) * pos_bias->ne[0] * lctx.inp_pos_bucket->ne[0],  0);
-    //    cb(pos_bias, "pos_bias", -1);
-
-    //    pos_bias = ggml_permute(ctx0, pos_bias, 2, 0, 1, 3);
-    //    cb(pos_bias, "pos_bias", -1);
-
-    //    pos_bias = ggml_cont(ctx0, pos_bias);
-    //    cb(pos_bias, "pos_bias", -1);
-
-    //    return pos_bias;
-    //}
+        return pos_bias;
+    }
 
     void build_llama(ggml_cgraph * gf) {
         const int64_t n_embd_head = hparams.n_embd_head_v;
@@ -9614,132 +9635,104 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, cur);
     }
 
-    //void build_t5_enc(ggml_cgraph * gf) {
-    //    const int64_t n_embd_head = hparams.n_embd_head_v;
-    //    const int64_t n_embd_gqa  = hparams.n_embd_v_gqa();
+    void build_t5_enc(ggml_cgraph * gf) {
+        const int64_t n_embd_head = hparams.n_embd_head_v;
 
-    //    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
 
-    //    struct ggml_tensor * cur;
-    //    struct ggml_tensor * inpL;
+        struct ggml_tensor * cur;
+        struct ggml_tensor * inpL;
 
-    //    inpL = build_inp_embd(model.tok_embd);
+        inpL = build_inp_embd(model.tok_embd);
 
-    //    GGML_ASSERT(lctx.is_encoding);
-    //    struct ggml_tensor * pos_bucket_enc = build_pos_bucket(false);
+        struct ggml_tensor * pos_bucket_enc = build_pos_bucket();
 
-    //    // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
-    //    struct ggml_tensor * KQ_mask_enc = build_inp_kq_mask(false);
+        lgf->build_attn_inp(ctx0, n_tokens, false, false);
 
-    //    for (int il = 0; il < n_layer; ++il) {
-    //        struct ggml_tensor * inpSA = inpL;
+        for (int il = 0; il < n_layer; ++il) {
+            struct ggml_tensor * inpSA = inpL;
 
-    //        // norm
-    //        cur = build_norm(inpL,
-    //                model.layers[il].attn_norm_enc, NULL,
-    //                LLM_NORM_RMS, il);
-    //        cb(cur, "attn_norm", il);
+            // norm
+            cur = build_norm(inpL,
+                    model.layers[il].attn_norm_enc, NULL,
+                    LLM_NORM_RMS, il);
+            cb(cur, "attn_norm", il);
 
-    //        // self-attention
-    //        {
-    //            struct ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq_enc, cur);
-    //            cb(Qcur, "Qcur", il);
+            // self-attention
+            {
+                struct ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq_enc, cur);
+                cb(Qcur, "Qcur", il);
 
-    //            struct ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk_enc, cur);
-    //            cb(Kcur, "Kcur", il);
+                struct ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk_enc, cur);
+                cb(Kcur, "Kcur", il);
 
-    //            struct ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv_enc, cur);
-    //            cb(Vcur, "Vcur", il);
+                struct ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv_enc, cur);
+                cb(Vcur, "Vcur", il);
 
-    //            Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
-    //            Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
+                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+                Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
 
-    //            struct ggml_tensor * q =                 ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
-    //            struct ggml_tensor * k = ggml_cont(ctx0, ggml_permute(ctx0, Kcur, 0, 2, 1, 3));
+                struct ggml_tensor * attn_rel_b = model.layers[il].attn_rel_b_enc ? model.layers[il].attn_rel_b_enc : model.layers[0].attn_rel_b_enc;
+                struct ggml_tensor * kq_b = build_pos_bias(pos_bucket_enc, attn_rel_b);
 
-    //            struct ggml_tensor * kq = ggml_mul_mat(ctx0, k, q);
-    //            cb(kq, "kq", il);
+                cur = build_attn_with_kq_b(gf,
+                        model.layers[il].wo, model.layers[il].bo,
+                        Qcur, Kcur, Vcur, kq_b, n_tokens, 1.0f, il);
+                cb(cur, "kqv_out", il);
+            }
 
-    //            struct ggml_tensor * attn_rel_b = model.layers[il].attn_rel_b_enc ? model.layers[il].attn_rel_b_enc : model.layers[0].attn_rel_b_enc;
-    //            struct ggml_tensor * pos_bias = build_pos_bias(pos_bucket_enc, attn_rel_b);
-    //            struct ggml_tensor * kq_b = ggml_add(ctx0, kq, pos_bias);
-    //            cb(kq_b, "kq_b", il);
+            if (il == n_layer - 1) {
+                // skip computing output for unused tokens
+                struct ggml_tensor * inp_out_ids = build_inp_out_ids();
+                cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
+                inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+            }
 
-    //            kq = ggml_soft_max_ext(ctx0, kq_b, KQ_mask_enc, 1.0f, hparams.f_max_alibi_bias);
-    //            cb(kq, "kq_soft_max_ext", il);
+            struct ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+            cb(ffn_inp, "ffn_inp", il);
 
-    //            struct ggml_tensor * v = ggml_cont(ctx0, ggml_transpose(ctx0, ggml_reshape_2d(ctx0, Vcur, n_embd_gqa, n_tokens)));
-    //            cb(v, "v", il);
+            // feed-forward network
+            {
+                cur = build_norm(ffn_inp,
+                        model.layers[il].ffn_norm_enc, NULL,
+                        LLM_NORM_RMS, il);
+                cb(cur, "ffn_norm", il);
 
-    //            struct ggml_tensor * kqv = ggml_mul_mat(ctx0, ggml_reshape_3d(ctx0, v, n_tokens, n_embd_head, n_head_kv), kq);
-    //            cb(kqv, "kqv", il);
+                // T5 uses relu, flan-T5 uses gelu-gated
+                cur = build_ffn(cur,
+                        model.layers[il].ffn_up_enc,   NULL, NULL,
+                        model.layers[il].ffn_gate_enc, NULL, NULL,
+                        model.layers[il].ffn_down_enc, NULL, NULL,
+                        NULL,
+                        model.layers[il].ffn_gate_enc ? LLM_FFN_GELU : LLM_FFN_RELU,
+                        model.layers[il].ffn_gate_enc ? LLM_FFN_PAR  : LLM_FFN_SEQ,
+                        il);
+                cb(cur, "ffn_out", il);
+            }
 
-    //            struct ggml_tensor * kqv_merged = ggml_permute(ctx0, kqv, 0, 2, 1, 3);
-    //            cb(kqv_merged, "kqv_merged", il);
+            cur = ggml_add(ctx0, cur, ffn_inp);
+            cb(cur, "ffn_out", il);
 
-    //            cur = ggml_cont_2d(ctx0, kqv_merged, n_embd_gqa, n_tokens);
-    //            cb(cur, "kqv_merged_cont", il);
+            cur = lgf->build_cvec(ctx0, cur, il);
+            cb(cur, "l_out", il);
 
-    //            ggml_build_forward_expand(gf, cur);
+            // input for next layer
+            inpL = cur;
+        }
 
-    //            cur = build_lora_mm(model.layers[il].wo_enc, cur);
-    //            cb(cur, "kqv_out", il);
-    //        }
+        cur = inpL;
+        cb(cur, "result_embd", -1);
 
-    //        if (il == n_layer - 1) {
-    //            // skip computing output for unused tokens
-    //            struct ggml_tensor * inp_out_ids = build_inp_out_ids();
-    //            cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
-    //            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
-    //        }
+        cur = build_norm(cur,
+                model.output_norm_enc, NULL,
+                LLM_NORM_RMS, -1);
 
-    //        struct ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
-    //        cb(ffn_inp, "ffn_inp", il);
+        cb(cur, "result_norm", -1);
+        res.t_embd = cur;
 
-    //        // feed-forward network
-    //        {
-    //            cur = build_norm(ffn_inp,
-    //                    model.layers[il].ffn_norm_enc, NULL,
-    //                    LLM_NORM_RMS, il);
-    //            cb(cur, "ffn_norm", il);
-
-    //            // T5 uses relu, flan-T5 uses gelu-gated
-    //            cur = build_ffn(cur,
-    //                    model.layers[il].ffn_up_enc,   NULL, NULL,
-    //                    model.layers[il].ffn_gate_enc, NULL, NULL,
-    //                    model.layers[il].ffn_down_enc, NULL, NULL,
-    //                    NULL,
-    //                    model.layers[il].ffn_gate_enc ? LLM_FFN_GELU : LLM_FFN_RELU,
-    //                    model.layers[il].ffn_gate_enc ? LLM_FFN_PAR  : LLM_FFN_SEQ,
-    //                    il);
-    //            cb(cur, "ffn_out", il);
-    //        }
-
-    //        cur = ggml_add(ctx0, cur, ffn_inp);
-    //        cb(cur, "ffn_out", il);
-
-    //        ggml_tensor * layer_dir = cvec.tensor_for(il);
-    //        if (layer_dir != nullptr) {
-    //            cur = ggml_add(ctx0, cur, layer_dir);
-    //        }
-    //        cb(cur, "l_out", il);
-
-    //        // input for next layer
-    //        inpL = cur;
-    //    }
-
-    //    cur = inpL;
-    //    cb(cur, "result_embd", -1);
-
-    //    cur = build_norm(cur,
-    //            model.output_norm_enc, NULL,
-    //            LLM_NORM_RMS, -1);
-    //
-    //    cb(cur, "result_norm", -1);
-    //    res.t_embd = cur;
-
-    //    ggml_build_forward_expand(gf, cur);
-    //}
+        ggml_build_forward_expand(gf, cur);
+    }
 
     //void build_t5_dec(ggml_cgraph * gf) {
     //    const int64_t n_embd_head = hparams.n_embd_head_v;
@@ -11091,14 +11084,19 @@ llama_graph_result llama_model::build_graph(
             {
                 llm.build_bitnet(gf);
             } break;
-        //case LLM_ARCH_T5:
-        //    {
-        //        if (lctx.is_encoding) {
-        //            llm.build_t5_enc(gf);
-        //        } else {
-        //            llm.build_t5_dec(gf);
-        //        }
-        //    } break;
+        case LLM_ARCH_T5:
+            {
+                switch (lgf->get_type()) {
+                    case LLAMA_GRAPH_TYPE_ENCODER:
+                        llm.build_t5_enc(gf);
+                        break;
+                    case LLAMA_GRAPH_TYPE_DECODER:
+                        //llm.build_t5_dec(gf);
+                        break;
+                    default:
+                        GGML_ABORT("invalid graph type");
+                };
+            } break;
         //case LLM_ARCH_T5ENCODER:
         //    {
         //        llm.build_t5_enc(gf);

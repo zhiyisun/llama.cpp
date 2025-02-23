@@ -11,19 +11,62 @@
 #include <cinttypes>
 
 //
+// helpers
+//
+
+static int32_t llama_relative_position_bucket(llama_pos x, llama_pos y, uint64_t n_buckets, bool bidirectional) {
+    // TODO move to hparams if a T5 variant appears that uses a different value
+    const int64_t max_distance = 128;
+
+    if (bidirectional) {
+        n_buckets >>= 1;
+    }
+
+    const int64_t max_exact = n_buckets >> 1;
+
+    int32_t relative_position = x - y;
+    int32_t relative_bucket = 0;
+
+    if (bidirectional) {
+        relative_bucket += (relative_position > 0) * n_buckets;
+        relative_position = abs(relative_position);
+    } else {
+        relative_position = -std::min<int32_t>(relative_position, 0);
+    }
+
+    int32_t relative_position_if_large = floorf(max_exact + logf(1.0 * relative_position / max_exact) * (n_buckets - max_exact) / log(1.0 * max_distance / max_exact));
+    relative_position_if_large = std::min<int32_t>(relative_position_if_large, n_buckets - 1);
+    relative_bucket += (relative_position < max_exact ? relative_position : relative_position_if_large);
+
+    return relative_bucket;
+}
+
+//
 // llama_context
 //
 
 llama_context::llama_context(
         const llama_model & model,
-        const llama_context_params & params,
+              llama_context_params params,
               llama_graph_type gtype) :
     llama_graph_i(gtype),
     model(model) {
-    LLAMA_LOG_INFO("%s: constructing llama_context\n", __func__);
+    LLAMA_LOG_INFO("%s: constructing llama_context, gtype = %d\n", __func__, gtype);
 
     t_start_us = model.t_start_us;
     t_load_us  = model.t_load_us;
+
+    switch (gtype) {
+        case LLAMA_GRAPH_TYPE_DEFAULT:
+        case LLAMA_GRAPH_TYPE_DECODER:
+            {
+            } break;
+        case LLAMA_GRAPH_TYPE_ENCODER:
+            {
+                params.attention_type = LLAMA_ATTENTION_TYPE_NON_CAUSAL;
+                params.embeddings = true;
+            }  break;
+    }
 
     const auto & hparams = model.hparams;
 
@@ -44,20 +87,6 @@ llama_context::llama_context(
     cparams.n_ctx            = params.n_ctx           == 0    ? hparams.n_ctx_train           : params.n_ctx;
     cparams.rope_freq_base   = params.rope_freq_base  == 0.0f ? hparams.rope_freq_base_train  : params.rope_freq_base;
     cparams.rope_freq_scale  = params.rope_freq_scale == 0.0f ? hparams.rope_freq_scale_train : params.rope_freq_scale;
-
-    // with causal attention, the batch size is limited by the context size
-    cparams.n_batch          = hparams.causal_attn ? std::min(cparams.n_ctx, params.n_batch) : params.n_batch;
-
-    // the batch has to be at least GGML_KQ_MASK_PAD because we will be padding the KQ_mask
-    // this is required by GPU kernels in order to avoid out-of-bounds accesses (e.g. ggml_flash_attn_ext)
-    // ref: https://github.com/ggerganov/llama.cpp/pull/5021
-    // TODO: this padding is not needed for the cache-less context so we should probably move it to llama_context_kv_self
-    if (cparams.n_batch < GGML_KQ_MASK_PAD) {
-        LLAMA_LOG_WARN("%s: n_batch is less than GGML_KQ_MASK_PAD - increasing to %d\n", __func__, GGML_KQ_MASK_PAD);
-        cparams.n_batch = GGML_KQ_MASK_PAD;
-    }
-
-    cparams.n_ubatch         = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
 
     cparams.n_ctx_orig_yarn  = params.yarn_orig_ctx    != 0 ? params.yarn_orig_ctx    :
                                hparams.n_ctx_orig_yarn != 0 ? hparams.n_ctx_orig_yarn :
@@ -95,6 +124,20 @@ llama_context::llama_context(
         cparams.causal_attn = params.attention_type == LLAMA_ATTENTION_TYPE_CAUSAL;
     }
 
+    // with causal attention, the batch size is limited by the context size
+    cparams.n_batch = cparams.causal_attn ? std::min(cparams.n_ctx, params.n_batch) : params.n_batch;
+
+    // the batch has to be at least GGML_KQ_MASK_PAD because we will be padding the KQ_mask
+    // this is required by GPU kernels in order to avoid out-of-bounds accesses (e.g. ggml_flash_attn_ext)
+    // ref: https://github.com/ggerganov/llama.cpp/pull/5021
+    // TODO: this padding is not needed for the cache-less context so we should probably move it to llama_context_kv_self
+    if (cparams.n_batch < GGML_KQ_MASK_PAD) {
+        LLAMA_LOG_WARN("%s: n_batch is less than GGML_KQ_MASK_PAD - increasing to %d\n", __func__, GGML_KQ_MASK_PAD);
+        cparams.n_batch = GGML_KQ_MASK_PAD;
+    }
+
+    cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
+
     const uint32_t n_ctx_per_seq = cparams.n_ctx / cparams.n_seq_max;
 
     LLAMA_LOG_INFO("%s: n_seq_max     = %u\n",   __func__, cparams.n_seq_max);
@@ -102,6 +145,7 @@ llama_context::llama_context(
     LLAMA_LOG_INFO("%s: n_ctx_per_seq = %u\n",   __func__, n_ctx_per_seq);
     LLAMA_LOG_INFO("%s: n_batch       = %u\n",   __func__, cparams.n_batch);
     LLAMA_LOG_INFO("%s: n_ubatch      = %u\n",   __func__, cparams.n_ubatch);
+    LLAMA_LOG_INFO("%s: causal_attn   = %d\n",   __func__, cparams.causal_attn);
     LLAMA_LOG_INFO("%s: flash_attn    = %d\n",   __func__, cparams.flash_attn);
     LLAMA_LOG_INFO("%s: freq_base     = %.1f\n", __func__, cparams.rope_freq_base);
     LLAMA_LOG_INFO("%s: freq_scale    = %g\n",   __func__, cparams.rope_freq_scale);
@@ -1207,6 +1251,23 @@ void llama_context::input_set(const llama_ubatch & ubatch) {
         }
     }
 
+    if (inp.pos_bucket) {
+        const int64_t n_tokens = ubatch.n_tokens;
+
+        GGML_ASSERT(ggml_backend_buffer_is_host(inp.pos_bucket->buffer));
+        GGML_ASSERT(!ubatch.equal_seqs); // TODO: use ubatch.n_seqs instead of failing
+
+        int32_t * data = (int32_t *) inp.pos_bucket->data;
+
+        for (int h = 0; h < 1; ++h) {
+            for (int j = 0; j < n_tokens; ++j) {
+                for (int i = 0; i < n_tokens; ++i) {
+                    data[h*(n_tokens*n_tokens) + j*n_tokens + i] = llama_relative_position_bucket(ubatch.pos[i], ubatch.pos[j], hparams.n_rel_attn_bkts, true);
+                }
+            }
+        }
+    }
+
     GGML_ASSERT(
             // (!a || b) is a logical implication (a -> b)
             // !hparams.causal_attn -> !cparams.causal_attn
@@ -1604,6 +1665,15 @@ ggml_tensor * llama_context::build_inp_pos(
     return inp.pos;
 }
 
+ggml_tensor * llama_context::build_inp_pos_bucket(
+        ggml_context * ctx0,
+             int32_t   n_tokens) {
+    inp.pos_bucket = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_tokens, n_tokens);
+    ggml_set_input(inp.pos_bucket);
+
+    return inp.pos_bucket;
+}
+
 ggml_tensor * llama_context::build_inp_out_ids(
         ggml_context * ctx0) {
     const int32_t n_out_ids = n_outputs;
@@ -1656,6 +1726,7 @@ ggml_tensor * llama_context::build_attn(
          ggml_tensor * q_cur,
          ggml_tensor * k_cur,
          ggml_tensor * v_cur,
+         ggml_tensor * kq_b,
              int32_t   n_tokens,
              float     kq_scale,
              int       il) {
@@ -1690,6 +1761,8 @@ ggml_tensor * llama_context::build_attn(
         GGML_UNUSED(model);
         GGML_UNUSED(n_ctx);
 
+        GGML_ASSERT(kq_b == nullptr);
+
         struct ggml_tensor * v = ggml_cont(ctx0, ggml_permute(ctx0, v_cur, 0, 2, 1, 3));
         v = ggml_reshape_3d(ctx0, v, n_embd_head_v, n_kv, n_head_kv);
 
@@ -1720,8 +1793,12 @@ ggml_tensor * llama_context::build_attn(
 
         if (hparams.attn_soft_cap) {
             kq = ggml_scale(ctx0, kq, 1.0f / hparams.f_attn_logit_softcapping);
-            kq = ggml_tanh(ctx0, kq);
+            kq = ggml_tanh (ctx0, kq);
             kq = ggml_scale(ctx0, kq, hparams.f_attn_logit_softcapping);
+        }
+
+        if (kq_b) {
+            kq = ggml_add(ctx0, kq, kq_b);
         }
 
         kq = ggml_soft_max_ext(ctx0, kq, kq_mask, kq_scale, hparams.f_max_alibi_bias);
@@ -2281,7 +2358,7 @@ size_t llama_context::state_seq_set_data(llama_io_read_i & io, llama_seq_id seq_
 
 llama_context_kv_self::llama_context_kv_self(
         const llama_model & model,
-        const llama_context_params & params,
+              llama_context_params params,
               llama_graph_type gtype) :
     llama_context(model, params, gtype),
     kv_self(model.hparams) {
@@ -3053,53 +3130,19 @@ void llama_context_kv_self::input_set(const llama_ubatch & ubatch) {
         }
     }
 
-    if (inp_pos_bucket) {
+    if (inp.self_pos_bucket) {
         const int64_t n_tokens = ubatch.n_tokens;
 
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp_pos_bucket->buffer));
+        GGML_ASSERT(ggml_backend_buffer_is_host(inp.self_pos_bucket->buffer));
         GGML_ASSERT(!ubatch.equal_seqs); // TODO: use ubatch.n_seqs instead of failing
 
-        static const auto relative_position_bucket = [](llama_pos x, llama_pos y, uint64_t n_buckets, bool bidirectional) {
-            // TODO move to hparams if a T5 variant appears that uses a different value
-            const int64_t max_distance = 128;
+        int32_t * data = (int32_t *) inp.self_pos_bucket->data;
 
-            if (bidirectional) {
-                n_buckets >>= 1;
-            }
-
-            const int64_t max_exact = n_buckets >> 1;
-
-            int32_t relative_position = x - y;
-            int32_t relative_bucket = 0;
-            if (bidirectional) {
-                relative_bucket += (relative_position > 0) * n_buckets;
-                relative_position = abs(relative_position);
-            } else {
-                relative_position = -std::min<int32_t>(relative_position, 0);
-            }
-            int32_t relative_position_if_large = floorf(max_exact + logf(1.0 * relative_position / max_exact) * (n_buckets - max_exact) / log(1.0 * max_distance / max_exact));
-            relative_position_if_large = std::min<int32_t>(relative_position_if_large, n_buckets - 1);
-            relative_bucket += (relative_position < max_exact ? relative_position : relative_position_if_large);
-            return relative_bucket;
-        };
-
-        int32_t * data = (int32_t *) inp_pos_bucket->data;
-
-        if (!is_encoding) {
-            const int64_t n_kv = kv_self.n;
-            for (int h = 0; h < 1; ++h) {
-                for (int j = 0; j < n_tokens; ++j) {
-                    for (int i = 0; i < n_kv; ++i) {
-                        data[h*(n_kv*n_tokens) + j*n_kv + i] = relative_position_bucket(kv_self.cells[i].pos, ubatch.pos[j], hparams.n_rel_attn_bkts, is_encoding);
-                    }
-                }
-            }
-        } else {
-            for (int h = 0; h < 1; ++h) {
-                for (int j = 0; j < n_tokens; ++j) {
-                    for (int i = 0; i < n_tokens; ++i) {
-                        data[h*(n_tokens*n_tokens) + j*n_tokens + i] = relative_position_bucket(ubatch.pos[i], ubatch.pos[j], hparams.n_rel_attn_bkts, is_encoding);
-                    }
+        const int64_t n_kv = kv_self.n;
+        for (int h = 0; h < 1; ++h) {
+            for (int j = 0; j < n_tokens; ++j) {
+                for (int i = 0; i < n_kv; ++i) {
+                    data[h*(n_kv*n_tokens) + j*n_kv + i] = llama_relative_position_bucket(kv_self.cells[i].pos, ubatch.pos[j], hparams.n_rel_attn_bkts, false);
                 }
             }
         }
@@ -3146,7 +3189,6 @@ void llama_context_kv_self::input_set(const llama_ubatch & ubatch) {
 
 ggml_cgraph * llama_context_kv_self::graph_init() {
     inp_embd_enc      = nullptr;
-    inp_pos_bucket    = nullptr;
     inp_kq_mask_cross = nullptr;
 
     inp = {};
@@ -3159,6 +3201,17 @@ ggml_tensor * llama_context_kv_self::build_inp_self_k_shift(ggml_context * ctx0)
     ggml_set_input(inp.self_k_shift);
 
     return inp.self_k_shift;
+}
+
+ggml_tensor * llama_context_kv_self::build_inp_pos_bucket(
+        ggml_context * ctx0,
+             int32_t   n_tokens) {
+    const auto n_kv = kv_self.n;
+
+    inp.self_pos_bucket = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_kv, n_tokens);
+    ggml_set_input(inp.self_pos_bucket);
+
+    return inp.self_pos_bucket;
 }
 
 void llama_context_kv_self::build_attn_inp(
@@ -3199,6 +3252,7 @@ ggml_tensor * llama_context_kv_self::build_attn(
          ggml_tensor * q_cur,
          ggml_tensor * k_cur,
          ggml_tensor * v_cur,
+         ggml_tensor * kq_b,
              int32_t   n_tokens,
              float     kq_scale,
              int       il) {
@@ -3293,6 +3347,8 @@ ggml_tensor * llama_context_kv_self::build_attn(
         GGML_UNUSED(model);
         GGML_UNUSED(n_ctx);
 
+        GGML_ASSERT(kq_b == nullptr);
+
         // split cached v into n_head heads (not transposed)
         struct ggml_tensor * v =
             ggml_view_3d(ctx0, kv_self.v_l[il],
@@ -3329,8 +3385,12 @@ ggml_tensor * llama_context_kv_self::build_attn(
 
         if (hparams.attn_soft_cap) {
             kq = ggml_scale(ctx0, kq, 1.0f / hparams.f_attn_logit_softcapping);
-            kq = ggml_tanh(ctx0, kq);
+            kq = ggml_tanh (ctx0, kq);
             kq = ggml_scale(ctx0, kq, hparams.f_attn_logit_softcapping);
+        }
+
+        if (kq_b) {
+            kq = ggml_add(ctx0, kq, kq_b);
         }
 
         kq = ggml_soft_max_ext(ctx0, kq, kq_mask, kq_scale, hparams.f_max_alibi_bias);
@@ -3753,7 +3813,7 @@ size_t llama_context_kv_self::state_seq_set_data(llama_io_read_i & io, llama_seq
 
 llama_context_recurrent::llama_context_recurrent(
         const llama_model & model,
-        const llama_context_params & params,
+              llama_context_params params,
               llama_graph_type gtype) :
     llama_context(model, params, gtype),
     kv_self(model.hparams) {
@@ -4629,7 +4689,7 @@ size_t llama_context_recurrent::state_seq_set_data(llama_io_read_i & io, llama_s
 
 llama_context_enc_dec::llama_context_enc_dec(
         const llama_model & model,
-        const llama_context_params & params) :
+              llama_context_params params) :
     llama_context(model, params, LLAMA_GRAPH_TYPE_ENCODER),
     ctx_dec(model, params, LLAMA_GRAPH_TYPE_DECODER) {
     LLAMA_LOG_INFO("%s: constructing llama_context_enc_dec\n", __func__);
