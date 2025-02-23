@@ -117,15 +117,6 @@ public:
                  float     kq_scale,
                  int       il);
 
-    virtual void build_kv_self_shift(
-            ggml_context * ctx0,
-            ggml_cgraph * gf);
-
-    // find holes from the beginning of the KV cache and fill them by moving data from the end of the cache
-    virtual void build_kv_self_defrag(
-            ggml_context * ctx0,
-            ggml_cgraph * gf);
-
     virtual ggml_tensor * build_inp_self_k_shift(
             ggml_context * ctx0);
 

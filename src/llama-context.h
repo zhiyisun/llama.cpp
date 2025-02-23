@@ -171,7 +171,7 @@ protected:
     // graph
     //
 
-    // zero-out inputs and create the ctx_context for the compute graph
+    // zero-out inputs and create the ctx_compute for the compute graph
     virtual ggml_cgraph * graph_init();
 
     // TODO: add encode/decode graphs
@@ -187,73 +187,74 @@ protected:
 
     ggml_context_ptr ctx_compute;
 
+public:
     //
-    // graph build API (generic)
+    // graph build
     //
 
     virtual void build_cb(
              ggml_tensor * cur,
               const char * name,
       const llama_ubatch & ubatch,
-                     int   il);
+                     int   il) override;
 
     // apply control vector for layer il
     virtual ggml_tensor * build_cvec(
             ggml_context * ctx0,
              ggml_tensor * cur,
-                     int   il);
+                     int   il) override;
 
     // do mat_mul, while optionally apply lora
     virtual ggml_tensor * build_lora_mm(
             ggml_context * ctx0,
              ggml_tensor * w,
-             ggml_tensor * cur);
+             ggml_tensor * cur) override;
 
     // do mat_mul_id, while optionally apply lora
     virtual ggml_tensor * build_lora_mm_id(
             ggml_context * ctx0,
              ggml_tensor * w,   // struct ggml_tensor * as
              ggml_tensor * cur, // struct ggml_tensor * b
-             ggml_tensor * ids);
+             ggml_tensor * ids) override;
 
-    virtual ggml_tensor * build_rope_factors(int il);
+    virtual ggml_tensor * build_rope_factors(int il) override;
 
     virtual ggml_tensor * build_rope_shift(
             ggml_context * ctx0,
              ggml_tensor * cur,
              ggml_tensor * shift,
              ggml_tensor * factors,
-             ggml_backend_buffer * bbuf);
+             ggml_backend_buffer * bbuf) override;
 
     virtual ggml_tensor * build_inp_embd(
             ggml_context * ctx0,
              ggml_tensor * tok_embd,
-      const llama_ubatch & ubatch);
+      const llama_ubatch & ubatch) override;
 
     virtual ggml_tensor * build_inp_pos(
             ggml_context * ctx0,
-                 int32_t   n_tokens);
+                 int32_t   n_tokens) override;
 
     virtual ggml_tensor * build_inp_pos_bucket(
             ggml_context * ctx0,
-                 int32_t   n_tokens);
+                 int32_t   n_tokens) override;
 
     virtual ggml_tensor * build_inp_out_ids(
-            ggml_context * ctx0);
+            ggml_context * ctx0) override;
 
     virtual ggml_tensor * build_inp_mean(
             ggml_context * ctx0,
-                 int32_t   n_tokens);
+                 int32_t   n_tokens) override;
 
     virtual ggml_tensor * build_inp_cls(
             ggml_context * ctx0,
-                 int32_t   n_tokens);
+                 int32_t   n_tokens) override;
 
     virtual void build_attn_inp(
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
-                    bool   swa);
+                    bool   swa) override;
 
     virtual ggml_tensor * build_attn(
             ggml_context * ctx0,
@@ -266,7 +267,17 @@ protected:
              ggml_tensor * kq_b,
                  int32_t   n_tokens,
                  float     kq_scale,
-                 int       il);
+                 int       il) override;
+
+protected:
+    virtual void build_kv_self_shift(
+            ggml_context * ctx0,
+            ggml_cgraph * gf);
+
+    // find holes from the beginning of the KV cache and fill them by moving data from the end of the cache
+    virtual void build_kv_self_defrag(
+            ggml_context * ctx0,
+            ggml_cgraph * gf);
 
 public:
     //
@@ -434,6 +445,7 @@ protected:
 
     virtual ggml_cgraph * graph_init() override;
 
+public:
     //
     // graph build
     //
@@ -463,6 +475,7 @@ protected:
                  float     kq_scale,
                  int       il) override;
 
+protected:
     virtual void build_kv_self_shift(
             ggml_context * ctx0,
             ggml_cgraph * gf) override;
@@ -548,6 +561,7 @@ protected:
 
     virtual ggml_cgraph * graph_init() override;
 
+public:
     //
     // graph build
     //
@@ -600,6 +614,7 @@ protected:
       const llama_ubatch & ubatch,
                      int   il) override;
 
+protected:
     //
     // state save/load
     //

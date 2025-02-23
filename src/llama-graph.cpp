@@ -32,24 +32,6 @@ ggml_tensor * llama_graph_i::build_attn(
     return nullptr;
 }
 
-void llama_graph_i::build_kv_self_shift(
-        ggml_context * ctx0,
-        ggml_cgraph * gf) {
-    GGML_UNUSED(ctx0);
-    GGML_UNUSED(gf);
-
-    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
-}
-
-void llama_graph_i::build_kv_self_defrag(
-        ggml_context * ctx0,
-        ggml_cgraph * gf) {
-    GGML_UNUSED(ctx0);
-    GGML_UNUSED(gf);
-
-    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
-}
-
 ggml_tensor * llama_graph_i::build_inp_self_k_shift(
         ggml_context * ctx0) {
     GGML_UNUSED(ctx0);

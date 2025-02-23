@@ -1842,6 +1842,25 @@ ggml_tensor * llama_context::build_attn(
     return cur;
 }
 
+void llama_context::build_kv_self_shift(
+        ggml_context * ctx0,
+        ggml_cgraph * gf) {
+    GGML_UNUSED(ctx0);
+    GGML_UNUSED(gf);
+
+    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
+}
+
+void llama_context::build_kv_self_defrag(
+        ggml_context * ctx0,
+        ggml_cgraph * gf) {
+    GGML_UNUSED(ctx0);
+    GGML_UNUSED(gf);
+
+    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
+}
+
+
 //
 // perf
 //
