@@ -140,6 +140,7 @@ protected:
 
     virtual void input_set(const llama_ubatch & ubatch);
 
+private:
     struct {
         // base input tensors
         ggml_tensor * tokens;     // I32 [n_batch]
@@ -155,6 +156,7 @@ protected:
         ggml_tensor * kq_mask_cnv; //     [n_tokens, n_batch]
     } inp;
 
+protected:
     //
     // output
     //
@@ -192,71 +194,71 @@ public:
     // graph build
     //
 
-    virtual void build_cb(
+    void build_cb(
              ggml_tensor * cur,
               const char * name,
       const llama_ubatch & ubatch,
                      int   il) override;
 
     // apply control vector for layer il
-    virtual ggml_tensor * build_cvec(
+    ggml_tensor * build_cvec(
             ggml_context * ctx0,
              ggml_tensor * cur,
                      int   il) override;
 
     // do mat_mul, while optionally apply lora
-    virtual ggml_tensor * build_lora_mm(
+    ggml_tensor * build_lora_mm(
             ggml_context * ctx0,
              ggml_tensor * w,
              ggml_tensor * cur) override;
 
     // do mat_mul_id, while optionally apply lora
-    virtual ggml_tensor * build_lora_mm_id(
+    ggml_tensor * build_lora_mm_id(
             ggml_context * ctx0,
              ggml_tensor * w,   // struct ggml_tensor * as
              ggml_tensor * cur, // struct ggml_tensor * b
              ggml_tensor * ids) override;
 
-    virtual ggml_tensor * build_rope_factors(int il) override;
+    ggml_tensor * build_rope_factors(int il) override;
 
-    virtual ggml_tensor * build_rope_shift(
+    ggml_tensor * build_rope_shift(
             ggml_context * ctx0,
              ggml_tensor * cur,
              ggml_tensor * shift,
              ggml_tensor * factors,
              ggml_backend_buffer * bbuf) override;
 
-    virtual ggml_tensor * build_inp_embd(
+    ggml_tensor * build_inp_embd(
             ggml_context * ctx0,
              ggml_tensor * tok_embd,
       const llama_ubatch & ubatch) override;
 
-    virtual ggml_tensor * build_inp_pos(
+    ggml_tensor * build_inp_pos(
             ggml_context * ctx0,
                  int32_t   n_tokens) override;
 
-    virtual ggml_tensor * build_inp_pos_bucket(
+    ggml_tensor * build_inp_pos_bucket(
             ggml_context * ctx0,
                  int32_t   n_tokens) override;
 
-    virtual ggml_tensor * build_inp_out_ids(
+    ggml_tensor * build_inp_out_ids(
             ggml_context * ctx0) override;
 
-    virtual ggml_tensor * build_inp_mean(
+    ggml_tensor * build_inp_mean(
             ggml_context * ctx0,
                  int32_t   n_tokens) override;
 
-    virtual ggml_tensor * build_inp_cls(
+    ggml_tensor * build_inp_cls(
             ggml_context * ctx0,
                  int32_t   n_tokens) override;
 
-    virtual void build_attn_inp(
+    void build_attn_inp(
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
                     bool   swa) override;
 
-    virtual ggml_tensor * build_attn(
+    ggml_tensor * build_attn(
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * wo,
@@ -270,6 +272,9 @@ public:
                  int       il) override;
 
 protected:
+    virtual ggml_tensor * build_inp_self_k_shift(
+            ggml_context * ctx0);
+
     virtual void build_kv_self_shift(
             ggml_context * ctx0,
             ggml_cgraph * gf);
@@ -288,6 +293,7 @@ public:
     virtual void perf_reset();
 
 protected:
+    // TODO: become private
     mutable int64_t t_start_us  = 0;
     mutable int64_t t_load_us   = 0;
     mutable int64_t t_p_eval_us = 0;
@@ -346,6 +352,7 @@ protected:
     //
     // members
     //
+    // TODO: become private / move to llama_graph_i
 
     const llama_model & model;
 
@@ -412,24 +419,25 @@ public:
     virtual ~llama_context_kv_self();
 
 protected:
-    virtual void reserve() override;
+    void reserve() override;
 
 public:
-    virtual       llama_kv_cache * get_kv_self()       override;
-    virtual const llama_kv_cache * get_kv_self() const override;
+          llama_kv_cache * get_kv_self()       override;
+    const llama_kv_cache * get_kv_self() const override;
 
-    virtual void kv_self_update() override;
+    void kv_self_update() override;
 
-    virtual int encode(llama_batch & inp_batch) override;
-    virtual int decode(llama_batch & inp_batch) override;
+    int encode(llama_batch & inp_batch) override;
+    int decode(llama_batch & inp_batch) override;
 
 protected:
     //
     // input
     //
 
-    virtual void input_set(const llama_ubatch & ubatch) override;
+    void input_set(const llama_ubatch & ubatch) override;
 
+private:
     struct {
         ggml_tensor * self_pos_bucket;      // I32 [n_kv, n_batch]
         ggml_tensor * self_kq_mask;         // F32 [n_kv, n_batch]
@@ -443,26 +451,24 @@ protected:
     // graph
     //
 
-    virtual ggml_cgraph * graph_init() override;
+    ggml_cgraph * graph_init() override;
 
 public:
     //
     // graph build
     //
 
-    virtual ggml_tensor * build_inp_self_k_shift(ggml_context * ctx0) override;
-
-    virtual ggml_tensor * build_inp_pos_bucket(
+    ggml_tensor * build_inp_pos_bucket(
             ggml_context * ctx0,
                  int32_t   n_tokens) override;
 
-    virtual void build_attn_inp(
+    void build_attn_inp(
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
                     bool   swa) override;
 
-    virtual ggml_tensor * build_attn(
+    ggml_tensor * build_attn(
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * wo,
@@ -476,16 +482,22 @@ public:
                  int       il) override;
 
 protected:
-    virtual void build_kv_self_shift(
+    ggml_tensor * build_inp_self_k_shift(ggml_context * ctx0) override;
+
+    void build_kv_self_shift(
             ggml_context * ctx0,
             ggml_cgraph * gf) override;
 
     // find holes from the beginning of the KV cache and fill them by moving data from the end of the cache
-    virtual void build_kv_self_defrag(
+    void build_kv_self_defrag(
             ggml_context * ctx0,
             ggml_cgraph * gf) override;
 
+    // =======================================================
     // === encoder-decoder ===
+    //
+    // TODO: this is temporary here, it will be moved
+    //
 
     // whether we are computing encoder output or decoder output
     bool is_encoding = false;
@@ -497,23 +509,25 @@ protected:
     struct ggml_tensor * inp_embd_enc;      // F32 [n_embd, n_outputs_enc]
     struct ggml_tensor * inp_kq_mask_cross; // F32 [n_outputs_enc, n_batch]
 
-    virtual ggml_tensor * build_inp_embd_enc(
+    ggml_tensor * build_inp_embd_enc(
             ggml_context * ctx0) override;
 
-    virtual ggml_tensor * build_inp_kq_mask_cross(
+    ggml_tensor * build_inp_kq_mask_cross(
             ggml_context * ctx0,
                  int32_t   n_tokens) override;
+    // ======================================================
 
     //
     // state save/load
     //
 
-    virtual size_t state_get_data(llama_io_write_i & io) override;
-    virtual size_t state_set_data(llama_io_read_i  & io) override;
+    size_t state_get_data(llama_io_write_i & io) override;
+    size_t state_set_data(llama_io_read_i  & io) override;
 
-    virtual size_t state_seq_get_data(llama_io_write_i & io, llama_seq_id seq_id) override;
-    virtual size_t state_seq_set_data(llama_io_read_i  & io, llama_seq_id seq_id) override;
+    size_t state_seq_get_data(llama_io_write_i & io, llama_seq_id seq_id) override;
+    size_t state_seq_set_data(llama_io_read_i  & io, llama_seq_id seq_id) override;
 
+private:
     //
     // members
     //
@@ -532,24 +546,25 @@ public:
     virtual ~llama_context_recurrent();
 
 protected:
-    virtual void reserve() override;
+    void reserve() override;
 
 public:
-    virtual       llama_kv_cache * get_kv_self()       override;
-    virtual const llama_kv_cache * get_kv_self() const override;
+          llama_kv_cache * get_kv_self()       override;
+    const llama_kv_cache * get_kv_self() const override;
 
-    virtual void kv_self_update() override;
+    void kv_self_update() override;
 
-    virtual int encode(llama_batch & inp_batch) override;
-    virtual int decode(llama_batch & inp_batch) override;
+    int encode(llama_batch & inp_batch) override;
+    int decode(llama_batch & inp_batch) override;
 
 protected:
     //
     // input
     //
 
-    virtual void input_set(const llama_ubatch & ubatch) override;
+    void input_set(const llama_ubatch & ubatch) override;
 
+private:
     struct {
         ggml_tensor * s_copy; // I32 [kv_size]
         ggml_tensor * s_mask; // F32 [1, n_kv]
@@ -559,20 +574,20 @@ protected:
     // graph
     //
 
-    virtual ggml_cgraph * graph_init() override;
+    ggml_cgraph * graph_init() override;
 
 public:
     //
     // graph build
     //
 
-    virtual ggml_tensor * build_inp_s_copy(
+    ggml_tensor * build_inp_s_copy(
             ggml_context * ctx0) override;
 
-    virtual ggml_tensor * build_inp_s_mask(
+    ggml_tensor * build_inp_s_mask(
             ggml_context * ctx0) override;
 
-    virtual ggml_tensor * build_copy_mask_state(
+    ggml_tensor * build_copy_mask_state(
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * s,
@@ -581,7 +596,7 @@ public:
                  int32_t   n_state,
                  int32_t   n_seqs) override;
 
-    virtual ggml_tensor * build_mamba_layer(
+    ggml_tensor * build_mamba_layer(
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * cur,
@@ -590,7 +605,7 @@ public:
       const llama_ubatch & ubatch,
                      int   il) override;
 
-    virtual ggml_tensor * build_rwkv_token_shift_load(
+    ggml_tensor * build_rwkv_token_shift_load(
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * state_copy,
@@ -598,13 +613,13 @@ public:
       const llama_ubatch & ubatch,
                      int   il) override;
 
-    virtual ggml_tensor * build_rwkv_token_shift_store(
+    ggml_tensor * build_rwkv_token_shift_store(
             ggml_context * ctx0,
              ggml_tensor * token_shift,
       const llama_ubatch & ubatch,
                      int   il) override;
 
-    virtual ggml_tensor * build_rwkv6_time_mix(
+    ggml_tensor * build_rwkv6_time_mix(
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * cur,
@@ -619,12 +634,13 @@ protected:
     // state save/load
     //
 
-    virtual size_t state_get_data(llama_io_write_i & io) override;
-    virtual size_t state_set_data(llama_io_read_i  & io) override;
+    size_t state_get_data(llama_io_write_i & io) override;
+    size_t state_set_data(llama_io_read_i  & io) override;
 
-    virtual size_t state_seq_get_data(llama_io_write_i & io, llama_seq_id seq_id) override;
-    virtual size_t state_seq_set_data(llama_io_read_i  & io, llama_seq_id seq_id) override;
+    size_t state_seq_get_data(llama_io_write_i & io, llama_seq_id seq_id) override;
+    size_t state_seq_set_data(llama_io_read_i  & io, llama_seq_id seq_id) override;
 
+private:
     //
     // members
     //
@@ -646,7 +662,7 @@ public:
 
     virtual ~llama_context_enc_dec();
 
-protected:
+private:
     llama_context_kv_self ctx_dec;
 };
 

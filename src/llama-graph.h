@@ -117,9 +117,6 @@ public:
                  float     kq_scale,
                  int       il);
 
-    virtual ggml_tensor * build_inp_self_k_shift(
-            ggml_context * ctx0);
-
     virtual ggml_tensor * build_inp_embd_enc(
             ggml_context * ctx0);
 

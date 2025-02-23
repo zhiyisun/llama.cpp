@@ -32,14 +32,6 @@ ggml_tensor * llama_graph_i::build_attn(
     return nullptr;
 }
 
-ggml_tensor * llama_graph_i::build_inp_self_k_shift(
-        ggml_context * ctx0) {
-    GGML_UNUSED(ctx0);
-
-    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
-    return nullptr;
-}
-
 ggml_tensor * llama_graph_i::build_inp_embd_enc(
         ggml_context * ctx0) {
     GGML_UNUSED(ctx0);

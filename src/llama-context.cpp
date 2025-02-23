@@ -1842,6 +1842,14 @@ ggml_tensor * llama_context::build_attn(
     return cur;
 }
 
+ggml_tensor * llama_context::build_inp_self_k_shift(
+        ggml_context * ctx0) {
+    GGML_UNUSED(ctx0);
+
+    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
+    return nullptr;
+}
+
 void llama_context::build_kv_self_shift(
         ggml_context * ctx0,
         ggml_cgraph * gf) {
