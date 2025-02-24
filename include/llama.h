@@ -944,7 +944,7 @@ extern "C" {
     DEPRECATED(LLAMA_API int32_t llama_encode(
             struct llama_context * ctx,
               struct llama_batch   batch), "use llama_batch_ext API instead");
-    LLAMA_API int32_t llama_text_encode(
+    LLAMA_API int32_t llama_encode_ext(
             struct llama_context * ctx,
           struct llama_batch_ext * batch);
 
@@ -955,7 +955,7 @@ extern "C" {
     DEPRECATED(LLAMA_API int32_t llama_decode(
             struct llama_context * ctx,
               struct llama_batch batch), "use llama_batch_ext API instead");
-    LLAMA_API int32_t llama_text_decode(
+    LLAMA_API int32_t llama_decode_ext(
             struct llama_context * ctx,
           struct llama_batch_ext * batch);
 

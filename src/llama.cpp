@@ -9977,7 +9977,7 @@ int32_t llama_encode(
     // also convert llama_batch to llama_batch_ext
     llama_batch_allocr batch_allocr(batch, batch.pos ? -1 : ctx->kv_self.max_pos() + 1);
     llama_batch_ext * batch_ext = batch_allocr.batch;
-    return llama_text_encode(ctx, batch_ext);
+    return llama_encode_ext(ctx, batch_ext);
 }
 
 // DEPRECATED
@@ -9988,10 +9988,10 @@ int32_t llama_decode(
     // also convert llama_batch to llama_batch_ext
     llama_batch_allocr batch_allocr(batch, batch.pos ? -1 : ctx->kv_self.max_pos() + 1);
     llama_batch_ext * batch_ext = batch_allocr.batch;
-    return llama_text_decode(ctx, batch_ext);
+    return llama_decode_ext(ctx, batch_ext);
 }
 
-int32_t llama_text_encode(
+int32_t llama_encode_ext(
         struct llama_context * ctx,
       struct llama_batch_ext * batch) {
     const int ret = llama_encode_impl(*ctx, *batch);
@@ -10002,7 +10002,7 @@ int32_t llama_text_encode(
     return ret;
 }
 
-int32_t llama_text_decode(
+int32_t llama_decode_ext(
         struct llama_context * ctx,
       struct llama_batch_ext * batch) {
     const int ret = llama_decode_impl(*ctx, *batch);

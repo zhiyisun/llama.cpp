@@ -3149,7 +3149,7 @@ struct server_context {
 
             llama_batch_ext_ptr batch_view(llama_batch_ext_get_view(batch.get(), i, n_tokens));
 
-            const int ret = llama_text_decode(ctx, batch_view.get());
+            const int ret = llama_decode_ext(ctx, batch_view.get());
             metrics.on_decoded(slots);
 
             if (ret != 0) {
@@ -3294,7 +3294,7 @@ struct server_context {
 
                 SLT_DBG(slot, "decoding speculative batch, size = %d\n", llama_batch_ext_get_n_tokens(slot.batch_spec.get()));
 
-                llama_text_decode(ctx, slot.batch_spec.get());
+                llama_decode_ext(ctx, slot.batch_spec.get());
 
                 // the accepted tokens from the speculation
                 const auto ids = common_sampler_sample_and_accept_n(slot.smpl, ctx, draft);
