@@ -20,90 +20,78 @@ class llama_io_write_i;
 
 using llama_loras = std::unordered_map<struct llama_adapter_lora *, float>;
 
-// basic transformer without KV cache
-struct llama_context : public llama_graph_i {
+// abstract interface corresponding to the public C API
+struct llama_context {
 public:
-    llama_context(
-            const llama_model & model,
-                  llama_context_params params,
-                  llama_graph_type gtype);
+    llama_context() = default;
+    virtual ~llama_context() = default;
 
-    virtual ~llama_context();
+    virtual void init() = 0;
 
-    // init scheduler and compute buffers, reserve worst-case graphs
-    // call once after the context is constructed
-    virtual void init();
+    virtual void synchronize() = 0;
 
-    virtual void synchronize();
+    virtual const llama_model   & get_model()   const = 0;
+    virtual const llama_cparams & get_cparams() const = 0;
 
-protected:
-    // called by init() to reserve the worst-case graphs
-    // override in child classes
-    virtual void reserve();
+    virtual uint32_t n_ctx()         const = 0;
+    virtual uint32_t n_ctx_per_seq() const = 0;
+    virtual uint32_t n_batch()       const = 0;
+    virtual uint32_t n_ubatch()      const = 0;
+    virtual uint32_t n_seq_max()     const = 0;
 
-public:
-    const llama_model   & get_model()   const;
-    const llama_cparams & get_cparams() const;
+    virtual uint32_t n_threads()       const = 0;
+    virtual uint32_t n_threads_batch() const = 0;
 
-    virtual uint32_t n_ctx()         const;
-    virtual uint32_t n_ctx_per_seq() const;
-    virtual uint32_t n_batch()       const;
-    virtual uint32_t n_ubatch()      const;
-    virtual uint32_t n_seq_max()     const;
-
-    virtual uint32_t n_threads()       const;
-    virtual uint32_t n_threads_batch() const;
-
-    virtual int32_t max_nodes() const;
+    virtual int32_t max_nodes() const = 0;
 
     // self-attention:
 
     // if the context does not have a KV cache, return nullptr
-    virtual       llama_kv_cache * get_kv_self();
-    virtual const llama_kv_cache * get_kv_self() const;
+    virtual       llama_kv_cache * get_kv_self()       = 0;
+    virtual const llama_kv_cache * get_kv_self() const = 0;
 
     // if the context does not have a KV cache, noop
-    virtual void kv_self_update();
+    virtual void kv_self_update() = 0;
 
-    virtual enum llama_pooling_type pooling_type() const;
+    virtual enum llama_pooling_type pooling_type() const = 0;
 
-    virtual float * get_logits();
-    virtual float * get_logits_ith(int32_t i);
+    virtual float * get_logits()              = 0;
+    virtual float * get_logits_ith(int32_t i) = 0;
 
-    virtual float * get_embeddings();
-    virtual float * get_embeddings_ith(int32_t i);
-    virtual float * get_embeddings_seq(llama_seq_id seq_id);
+    virtual float * get_embeddings()                        = 0;
+    virtual float * get_embeddings_ith(int32_t i)           = 0;
+    virtual float * get_embeddings_seq(llama_seq_id seq_id) = 0;
 
-    virtual int64_t n_pos_per_token() const; // vision
+    virtual int64_t n_pos_per_token() const = 0; // vision
 
     virtual void attach_threadpool(
             ggml_threadpool_t   threadpool,
-            ggml_threadpool_t   threadpool_batch);
+            ggml_threadpool_t   threadpool_batch) = 0;
 
-    virtual void detach_threadpool();
+    virtual void detach_threadpool() = 0;
 
-    virtual void set_n_threads(int32_t n_threads, int32_t n_threads_batch);
+    virtual void set_n_threads(int32_t n_threads, int32_t n_threads_batch) = 0;
 
-    virtual void set_abort_callback(bool (*abort_callback)(void * data), void * abort_callback_data);
+    virtual void set_abort_callback(bool (*abort_callback)(void * data), void * abort_callback_data) = 0;
 
-    virtual void set_embeddings (bool value);
-    virtual void set_causal_attn(bool value);
+    virtual void set_embeddings (bool value) = 0;
+    virtual void set_causal_attn(bool value) = 0;
 
     virtual void set_adapter_lora(
             llama_adapter_lora * adapter,
-            float scale);
+            float scale) = 0;
 
     virtual bool rm_adapter_lora(
-            llama_adapter_lora * adapter);
+            llama_adapter_lora * adapter) = 0;
 
-    virtual void clear_adapter_lora();
+    virtual void clear_adapter_lora() = 0;
 
     virtual bool apply_adapter_cvec(
             const float * data,
                  size_t   len,
                 int32_t   n_embd,
                 int32_t   il_start,
-                int32_t   il_end);
+                int32_t   il_end) = 0;
 
     // encode a batch of tokens by evaluating the encoder part of the transformer
     //
@@ -114,7 +102,7 @@ public:
     // return positive int on warning
     // return negative int on error
     //
-    virtual int encode(llama_batch & inp_batch);
+    virtual int encode(llama_batch & inp_batch) = 0;
 
     // decode a batch of tokens by evaluating the transformer
     // in case of unsuccessful decoding (error or warning),
@@ -128,7 +116,145 @@ public:
     // return positive int on warning
     // return negative int on error
     //
-    virtual int decode(llama_batch & inp_batch);
+    virtual int decode(llama_batch & inp_batch) = 0;
+
+    //
+    // perf
+    //
+
+    virtual llama_perf_context_data perf_get_data() const = 0;
+    virtual void perf_reset() = 0;
+
+    //
+    // state save/load
+    //
+
+    virtual size_t state_get_size()                                 = 0;
+    virtual size_t state_get_data(      uint8_t * dst, size_t size) = 0;
+    virtual size_t state_set_data(const uint8_t * src, size_t size) = 0;
+
+    virtual size_t state_seq_get_size(llama_seq_id seq_id)                                   = 0;
+    virtual size_t state_seq_get_data(llama_seq_id seq_id,       uint8_t * dst, size_t size) = 0;
+    virtual size_t state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size) = 0;
+
+    virtual bool state_load_file(
+            const char * filepath,
+           llama_token * tokens_out,
+                size_t   n_token_capacity,
+                size_t * n_token_count_out) = 0;
+
+    virtual bool state_save_file(
+            const char * filepath,
+     const llama_token * tokens,
+                size_t   n_token_count) = 0;
+
+    virtual size_t state_seq_load_file(
+          llama_seq_id   seq_id,
+            const char * filepath,
+           llama_token * tokens_out,
+                size_t   n_token_capacity,
+                size_t * n_token_count_out) = 0;
+
+    virtual size_t state_seq_save_file(
+          llama_seq_id   seq_id,
+            const char * filepath,
+     const llama_token * tokens,
+                size_t   n_token_count) = 0;
+};
+
+// C++ alias
+class llama_context_i : public llama_context {
+public:
+    using llama_context::llama_context;
+};
+
+// basic transformer without KV cache
+class llama_context_base : public llama_context_i, public llama_graph_i {
+public:
+    llama_context_base(
+            const llama_model & model,
+                  llama_context_params params,
+                  llama_graph_type gtype);
+
+    virtual ~llama_context_base();
+
+    // init scheduler and compute buffers, reserve worst-case graphs
+    // call once after the context is constructed
+    void init() override;
+
+    void synchronize() override;
+
+protected:
+    // called by init() to reserve the worst-case graphs
+    // override in child classes
+    virtual void reserve();
+
+public:
+    const llama_model   & get_model()   const override;
+    const llama_cparams & get_cparams() const override;
+
+    uint32_t n_ctx()         const override;
+    uint32_t n_ctx_per_seq() const override;
+    uint32_t n_batch()       const override;
+    uint32_t n_ubatch()      const override;
+    uint32_t n_seq_max()     const override;
+
+    uint32_t n_threads()       const override;
+    uint32_t n_threads_batch() const override;
+
+    int32_t max_nodes() const override;
+
+    // self-attention:
+
+    // if the context does not have a KV cache, return nullptr
+          llama_kv_cache * get_kv_self()       override;
+    const llama_kv_cache * get_kv_self() const override;
+
+    // if the context does not have a KV cache, noop
+    void kv_self_update() override;
+
+    enum llama_pooling_type pooling_type() const override;
+
+    float * get_logits()              override;
+    float * get_logits_ith(int32_t i) override;
+
+    float * get_embeddings()                        override;
+    float * get_embeddings_ith(int32_t i)           override;
+    float * get_embeddings_seq(llama_seq_id seq_id) override;
+
+    int64_t n_pos_per_token() const override; // vision
+
+    void attach_threadpool(
+            ggml_threadpool_t   threadpool,
+            ggml_threadpool_t   threadpool_batch) override;
+
+    void detach_threadpool() override;
+
+    void set_n_threads(int32_t n_threads, int32_t n_threads_batch) override;
+
+    void set_abort_callback(bool (*abort_callback)(void * data), void * abort_callback_data) override;
+
+    void set_embeddings (bool value) override;
+    void set_causal_attn(bool value) override;
+
+    void set_adapter_lora(
+            llama_adapter_lora * adapter,
+            float scale) override;
+
+    bool rm_adapter_lora(
+            llama_adapter_lora * adapter) override;
+
+    void clear_adapter_lora() override;
+
+    bool apply_adapter_cvec(
+            const float * data,
+                 size_t   len,
+                int32_t   n_embd,
+                int32_t   il_start,
+                int32_t   il_end) override;
+
+    int encode(llama_batch & inp_batch) override;
+    int decode(llama_batch & inp_batch) override;
 
 protected:
     //
@@ -297,8 +423,8 @@ public:
     // perf
     //
 
-    virtual llama_perf_context_data perf_get_data() const;
-    virtual void perf_reset();
+    llama_perf_context_data perf_get_data() const override;
+    void perf_reset()                             override;
 
 protected:
     // TODO: become private
@@ -318,37 +444,37 @@ public:
     // state save/load
     //
 
-    virtual size_t state_get_size();
-    virtual size_t state_get_data(      uint8_t * dst, size_t size);
-    virtual size_t state_set_data(const uint8_t * src, size_t size);
+    size_t state_get_size()                                 override;
+    size_t state_get_data(      uint8_t * dst, size_t size) override;
+    size_t state_set_data(const uint8_t * src, size_t size) override;
 
-    virtual size_t state_seq_get_size(llama_seq_id seq_id);
-    virtual size_t state_seq_get_data(llama_seq_id seq_id,       uint8_t * dst, size_t size);
-    virtual size_t state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size);
+    size_t state_seq_get_size(llama_seq_id seq_id)                                   override;
+    size_t state_seq_get_data(llama_seq_id seq_id,       uint8_t * dst, size_t size) override;
+    size_t state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size) override;
 
-    virtual bool state_load_file(
+    bool state_load_file(
             const char * filepath,
            llama_token * tokens_out,
                 size_t   n_token_capacity,
-                size_t * n_token_count_out);
+                size_t * n_token_count_out) override;
 
-    virtual bool state_save_file(
+    bool state_save_file(
             const char * filepath,
      const llama_token * tokens,
-                size_t   n_token_count);
+                size_t   n_token_count) override;
 
-    virtual size_t state_seq_load_file(
+    size_t state_seq_load_file(
           llama_seq_id   seq_id,
             const char * filepath,
            llama_token * tokens_out,
                 size_t   n_token_capacity,
-                size_t * n_token_count_out);
+                size_t * n_token_count_out) override;
 
-    virtual size_t state_seq_save_file(
+    size_t state_seq_save_file(
           llama_seq_id   seq_id,
             const char * filepath,
      const llama_token * tokens,
-                size_t   n_token_count);
+                size_t   n_token_count) override;
 
 protected:
     virtual size_t state_get_data(llama_io_write_i & io);
@@ -417,7 +543,7 @@ protected:
 };
 
 // transformer with a self-attention KV cache
-class llama_context_kv_self : public llama_context {
+class llama_context_kv_self : public llama_context_base {
 public:
     llama_context_kv_self(
             const llama_model & model,
@@ -542,7 +668,7 @@ private:
 };
 
 // a recurrent transformer (ie.e RWKV, Mamba)
-class llama_context_recurrent : public llama_context {
+class llama_context_recurrent : public llama_context_base {
 public:
     llama_context_recurrent(
             const llama_model & model,
@@ -656,12 +782,12 @@ private:
     llama_kv_cache_recurrent kv_self;
 };
 
-class llama_context_enc : public llama_context {
+class llama_context_enc : public llama_context_base {
 public:
-    using llama_context::llama_context;
+    using llama_context_base::llama_context_base;
 };
 
-class llama_context_enc_dec : public llama_context {
+class llama_context_enc_dec : public llama_context_enc {
 public:
     llama_context_enc_dec(
             const llama_model & model,
