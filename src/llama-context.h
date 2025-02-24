@@ -447,6 +447,7 @@ private:
         ggml_tensor * self_k_shift;         // I32 [kv_size]
     } inp;
 
+protected:
     //
     // graph
     //
@@ -570,6 +571,7 @@ private:
         ggml_tensor * s_mask; // F32 [1, n_kv]
     } inp;
 
+protected:
     //
     // graph
     //

@@ -3883,6 +3883,11 @@ llama_context_recurrent::llama_context_recurrent(
 llama_context_recurrent::~llama_context_recurrent() = default;
 
 void llama_context_recurrent::reserve() {
+    // simulate full KV cache
+    kv_self.n = kv_self.size;
+
+    LLAMA_LOG_DEBUG("%s: kv_self.n = %u\n", __func__, kv_self.n);
+
     // TODO: implement recurrent-specific reserve logic
     llama_context::reserve();
 }
