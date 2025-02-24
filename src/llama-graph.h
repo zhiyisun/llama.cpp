@@ -107,13 +107,10 @@ public:
     virtual ggml_tensor * build_attn(
             ggml_context * ctx0,
              ggml_cgraph * gf,
-             ggml_tensor * wo,
-             ggml_tensor * wo_b,
              ggml_tensor * q_cur,
              ggml_tensor * k_cur,
              ggml_tensor * v_cur,
              ggml_tensor * kq_b,
-                 int32_t   n_tokens,
                  float     kq_scale,
                  int       il);
 

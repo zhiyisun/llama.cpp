@@ -261,17 +261,25 @@ public:
     ggml_tensor * build_attn(
             ggml_context * ctx0,
              ggml_cgraph * gf,
-             ggml_tensor * wo,
-             ggml_tensor * wo_b,
              ggml_tensor * q_cur,
              ggml_tensor * k_cur,
              ggml_tensor * v_cur,
              ggml_tensor * kq_b,
-                 int32_t   n_tokens,
                  float     kq_scale,
                  int       il) override;
 
 protected:
+    virtual ggml_tensor * build_attn_mha(
+            ggml_context * ctx0,
+             ggml_cgraph * gf,
+             ggml_tensor * q,
+             ggml_tensor * k,
+             ggml_tensor * v,
+             ggml_tensor * kq_b,
+             ggml_tensor * kq_mask,
+                 bool      v_trans,
+                 float     kq_scale);
+
     virtual ggml_tensor * build_inp_self_k_shift(
             ggml_context * ctx0);
 
@@ -472,13 +480,10 @@ public:
     ggml_tensor * build_attn(
             ggml_context * ctx0,
              ggml_cgraph * gf,
-             ggml_tensor * wo,
-             ggml_tensor * wo_b,
              ggml_tensor * q_cur,
              ggml_tensor * k_cur,
              ggml_tensor * v_cur,
              ggml_tensor * kq_b,
-                 int32_t   n_tokens,
                  float     kq_scale,
                  int       il) override;
 

@@ -4265,17 +4265,31 @@ struct llm_build_context {
              struct ggml_tensor * q_cur,
              struct ggml_tensor * k_cur,
              struct ggml_tensor * v_cur,
-                        int32_t   n_tokens,
+                        int32_t   n_tokens, // TODO: remove
                         float     kq_scale,
                         int       il) {
+        GGML_UNUSED(n_tokens);
+
         // these nodes are added to the graph together so that they are not reordered
         // by doing so, the number of splits in the graph is reduced
         ggml_build_forward_expand(gf, q_cur);
         ggml_build_forward_expand(gf, k_cur);
         ggml_build_forward_expand(gf, v_cur);
 
-        ggml_tensor * cur = lgf->build_attn(ctx0, gf, wo, wo_b, q_cur, k_cur, v_cur, nullptr, n_tokens, kq_scale, il);
+        ggml_tensor * cur = lgf->build_attn(ctx0, gf, q_cur, k_cur, v_cur, nullptr, kq_scale, il);
         cb(cur, "kqv_out", il);
+
+        if (wo) {
+            cur = lgf->build_lora_mm(ctx0, wo, cur);
+        }
+
+        if (wo_b) {
+            //cb(cur, "kqv_wo", il);
+        }
+
+        if (wo_b) {
+            cur = ggml_add(ctx0, cur, wo_b);
+        }
 
         return cur;
     }
@@ -4288,17 +4302,31 @@ struct llm_build_context {
              struct ggml_tensor * k_cur,
              struct ggml_tensor * v_cur,
              struct ggml_tensor * kq_b,
-                        int32_t   n_tokens,
+                        int32_t   n_tokens, // TODO: remove
                         float     kq_scale,
                         int       il) {
+        GGML_UNUSED(n_tokens);
+
         // these nodes are added to the graph together so that they are not reordered
         // by doing so, the number of splits in the graph is reduced
         ggml_build_forward_expand(gf, q_cur);
         ggml_build_forward_expand(gf, k_cur);
         ggml_build_forward_expand(gf, v_cur);
 
-        ggml_tensor * cur = lgf->build_attn(ctx0, gf, wo, wo_b, q_cur, k_cur, v_cur, kq_b, n_tokens, kq_scale, il);
+        ggml_tensor * cur = lgf->build_attn(ctx0, gf, q_cur, k_cur, v_cur, kq_b, kq_scale, il);
         cb(cur, "kqv_out", il);
+
+        if (wo) {
+            cur = lgf->build_lora_mm(ctx0, wo, cur);
+        }
+
+        if (wo_b) {
+            //cb(cur, "kqv_wo", il);
+        }
+
+        if (wo_b) {
+            cur = ggml_add(ctx0, cur, wo_b);
+        }
 
         return cur;
     }
