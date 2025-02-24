@@ -114,10 +114,20 @@ public:
                  float     kq_scale,
                  int       il);
 
-    virtual ggml_tensor * build_inp_embd_enc(
+    virtual ggml_tensor * build_attn_cross(
+            ggml_context * ctx0,
+             ggml_cgraph * gf,
+             ggml_tensor * q_cur,
+             ggml_tensor * k_cur,
+             ggml_tensor * v_cur,
+             ggml_tensor * kq_b,
+                 float     kq_scale,
+                 int       il);
+
+    virtual ggml_tensor * build_inp_cross_embd(
             ggml_context * ctx0);
 
-    virtual ggml_tensor * build_inp_kq_mask_cross(
+    virtual ggml_tensor * build_inp_cross_kq_mask(
             ggml_context * ctx0,
                  int32_t   n_tokens);
 

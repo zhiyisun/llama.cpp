@@ -26,7 +26,29 @@ ggml_tensor * llama_graph_i::build_attn(
     return nullptr;
 }
 
-ggml_tensor * llama_graph_i::build_inp_embd_enc(
+ggml_tensor * llama_graph_i::build_attn_cross(
+        ggml_context * ctx0,
+         ggml_cgraph * gf,
+         ggml_tensor * q_cur,
+         ggml_tensor * k_cur,
+         ggml_tensor * v_cur,
+         ggml_tensor * kq_b,
+             float     kq_scale,
+             int       il) {
+    GGML_UNUSED(ctx0);
+    GGML_UNUSED(gf);
+    GGML_UNUSED(q_cur);
+    GGML_UNUSED(k_cur);
+    GGML_UNUSED(v_cur);
+    GGML_UNUSED(kq_b);
+    GGML_UNUSED(kq_scale);
+    GGML_UNUSED(il);
+
+    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
+    return nullptr;
+}
+
+ggml_tensor * llama_graph_i::build_inp_cross_embd(
         ggml_context * ctx0) {
     GGML_UNUSED(ctx0);
 
@@ -34,7 +56,7 @@ ggml_tensor * llama_graph_i::build_inp_embd_enc(
     return nullptr;
 }
 
-ggml_tensor * llama_graph_i::build_inp_kq_mask_cross(
+ggml_tensor * llama_graph_i::build_inp_cross_kq_mask(
         ggml_context * ctx0,
              int32_t   n_tokens) {
     GGML_UNUSED(ctx0);
