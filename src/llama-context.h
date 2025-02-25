@@ -748,11 +748,12 @@ private:
     llama_kv_cache_recurrent kv_self;
 };
 
-// TODO: tmp - need something better
+// TODO: tmp - need something better to pass the data from the encoder to the decoder
 struct llama_cross {
-    int32_t n_outputs;
-    float * embd_enc;
+    // the output embeddings from the encoder
+    ggml_tensor * t_embd = nullptr;
 
+    // needed to construct the cross-attention mask in the decoder
     std::vector<std::set<llama_seq_id>> seq_ids_enc;
 };
 
