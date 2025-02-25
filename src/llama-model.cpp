@@ -9741,7 +9741,7 @@ struct llm_build_context {
                 struct ggml_tensor * kq_b = build_pos_bias(pos_bucket_enc, attn_rel_b);
 
                 cur = build_attn_with_kq_b(gf,
-                        model.layers[il].wo, model.layers[il].bo,
+                        model.layers[il].wo_enc, nullptr,
                         Qcur, Kcur, Vcur, kq_b, n_tokens, 1.0f, il);
                 cb(cur, "kqv_out", il);
             }
