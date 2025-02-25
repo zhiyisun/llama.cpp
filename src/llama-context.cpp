@@ -4981,41 +4981,31 @@ void llama_context_enc_dec::perf_reset() {
 
 //
 // state save/load
+// TODO: for now dump just the decoder state, in the future dump both
 //
 
 size_t llama_context_enc_dec::state_get_size() {
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_get_size();
 }
 
 size_t llama_context_enc_dec::state_get_data(      uint8_t * dst, size_t size) {
-    GGML_UNUSED(dst);
-    GGML_UNUSED(size);
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_get_data(dst, size);
 }
 
 size_t llama_context_enc_dec::state_set_data(const uint8_t * src, size_t size) {
-    GGML_UNUSED(src);
-    GGML_UNUSED(size);
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_set_data(src, size);
 }
 
 size_t llama_context_enc_dec::state_seq_get_size(llama_seq_id seq_id) {
-    GGML_UNUSED(seq_id);
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_seq_get_size(seq_id);
 }
 
 size_t llama_context_enc_dec::state_seq_get_data(llama_seq_id seq_id,       uint8_t * dst, size_t size) {
-    GGML_UNUSED(seq_id);
-    GGML_UNUSED(dst);
-    GGML_UNUSED(size);
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_seq_get_data(seq_id, dst, size);
 }
 
 size_t llama_context_enc_dec::state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size) {
-    GGML_UNUSED(seq_id);
-    GGML_UNUSED(src);
-    GGML_UNUSED(size);
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_seq_set_data(seq_id, src, size);
 }
 
 bool llama_context_enc_dec::state_load_file(
@@ -5023,21 +5013,14 @@ bool llama_context_enc_dec::state_load_file(
        llama_token * tokens_out,
             size_t   n_token_capacity,
             size_t * n_token_count_out) {
-    GGML_UNUSED(filepath);
-    GGML_UNUSED(tokens_out);
-    GGML_UNUSED(n_token_capacity);
-    GGML_UNUSED(n_token_count_out);
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_load_file(filepath, tokens_out, n_token_capacity, n_token_count_out);
 }
 
 bool llama_context_enc_dec::state_save_file(
         const char * filepath,
  const llama_token * tokens,
             size_t   n_token_count) {
-    GGML_UNUSED(filepath);
-    GGML_UNUSED(tokens);
-    GGML_UNUSED(n_token_count);
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_save_file(filepath, tokens, n_token_count);
 }
 
 size_t llama_context_enc_dec::state_seq_load_file(
@@ -5046,12 +5029,7 @@ size_t llama_context_enc_dec::state_seq_load_file(
        llama_token * tokens_out,
             size_t   n_token_capacity,
             size_t * n_token_count_out) {
-    GGML_UNUSED(seq_id);
-    GGML_UNUSED(filepath);
-    GGML_UNUSED(tokens_out);
-    GGML_UNUSED(n_token_capacity);
-    GGML_UNUSED(n_token_count_out);
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_seq_load_file(seq_id, filepath, tokens_out, n_token_capacity, n_token_count_out);
 }
 
 size_t llama_context_enc_dec::state_seq_save_file(
@@ -5059,11 +5037,7 @@ size_t llama_context_enc_dec::state_seq_save_file(
         const char * filepath,
  const llama_token * tokens,
             size_t   n_token_count) {
-    GGML_UNUSED(seq_id);
-    GGML_UNUSED(filepath);
-    GGML_UNUSED(tokens);
-    GGML_UNUSED(n_token_count);
-    GGML_ABORT("TODO: implement");
+    return ctx_dec->state_seq_save_file(seq_id, filepath, tokens, n_token_count);
 }
 
 //
