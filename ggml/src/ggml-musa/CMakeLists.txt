@@ -20,11 +20,16 @@ find_package(MUSAToolkit)
 if (MUSAToolkit_FOUND)
     message(STATUS "MUSA Toolkit found")
 
+    if (NOT DEFINED MUSA_ARCHITECTURES)
+        set(MUSA_ARCHITECTURES "21;22")
+    endif()
+    message(STATUS "Using MUSA architectures: ${MUSA_ARCHITECTURES}")
+
     file(GLOB   GGML_HEADERS_MUSA "../ggml-cuda/*.cuh")
     list(APPEND GGML_HEADERS_MUSA "../../include/ggml-cuda.h")
 
     file(GLOB   GGML_SOURCES_MUSA "../ggml-cuda/*.cu")
-    file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-wmma*.cu")
+    file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-mma*.cu")
     list(APPEND GGML_SOURCES_MUSA ${SRCS})
     file(GLOB   SRCS "../ggml-cuda/template-instances/mmq*.cu")
     list(APPEND GGML_SOURCES_MUSA ${SRCS})
@@ -44,7 +49,11 @@ if (MUSAToolkit_FOUND)
 
     set_source_files_properties(${GGML_SOURCES_MUSA} PROPERTIES LANGUAGE CXX)
     foreach(SOURCE ${GGML_SOURCES_MUSA})
-        set_property(SOURCE ${SOURCE} PROPERTY COMPILE_FLAGS "-x musa -mtgpu --cuda-gpu-arch=mp_21 --cuda-gpu-arch=mp_22")
+        set(COMPILE_FLAGS "-fsigned-char -x musa -mtgpu")
+        foreach(ARCH ${MUSA_ARCHITECTURES})
+            set(COMPILE_FLAGS "${COMPILE_FLAGS} --cuda-gpu-arch=mp_${ARCH}")
+        endforeach()
+        set_property(SOURCE ${SOURCE} PROPERTY COMPILE_FLAGS ${COMPILE_FLAGS})
     endforeach()
 
     ggml_add_backend_library(ggml-musa
@@ -72,6 +81,10 @@ if (MUSAToolkit_FOUND)
 
     if (GGML_CUDA_NO_VMM)
         add_compile_definitions(GGML_CUDA_NO_VMM)
+    endif()
+
+    if (NOT GGML_CUDA_FA)
+        add_compile_definitions(GGML_CUDA_NO_FA)
     endif()
 
     if (GGML_CUDA_F16 OR GGML_CUDA_DMMV_F16)

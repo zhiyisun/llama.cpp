@@ -34,7 +34,7 @@ int main(int argc, char ** argv) {
     llama_numa_init(params.numa);
 
     llama_model * model_tgt = NULL;
-    llama_model * model_dft = NULL;
+    //llama_model * model_dft = NULL;
 
     llama_context * ctx_tgt = NULL;
     llama_context * ctx_dft = NULL;
@@ -42,10 +42,13 @@ int main(int argc, char ** argv) {
     // load the target model
     common_init_result llama_init_tgt = common_init_from_params(params);
 
-    model_tgt = llama_init_tgt.model;
-    ctx_tgt   = llama_init_tgt.context;
+    model_tgt = llama_init_tgt.model.get();
+    ctx_tgt   = llama_init_tgt.context.get();
+
+    const llama_vocab * vocab = llama_model_get_vocab(model_tgt);
 
     // load the draft model
+    params.devices      = params.speculative.devices;
     params.model        = params.speculative.model;
     params.n_ctx        = params.speculative.n_ctx;
     params.n_batch      = params.speculative.n_ctx > 0 ? params.speculative.n_ctx : params.n_batch;
@@ -58,8 +61,8 @@ int main(int argc, char ** argv) {
     params.cpuparams_batch.n_threads = params.speculative.cpuparams_batch.n_threads;
     common_init_result llama_init_dft = common_init_from_params(params);
 
-    model_dft = llama_init_dft.model;
-    ctx_dft   = llama_init_dft.context;
+    //model_dft = llama_init_dft.model.get();
+    ctx_dft   = llama_init_dft.context.get();
 
     if (!common_speculative_are_compatible(ctx_tgt, ctx_dft)) {
         return 1;
@@ -69,13 +72,13 @@ int main(int argc, char ** argv) {
     std::vector<llama_token> inp;
     inp = common_tokenize(ctx_tgt, params.prompt, true, true);
 
-    if (llama_n_ctx(ctx_tgt) < (int) inp.size()) {
+    if (llama_n_ctx(ctx_tgt) < (uint32_t) inp.size()) {
         LOG_ERR("%s: the prompt exceeds the context size (%d tokens, ctx %d)\n", __func__, (int) inp.size(), llama_n_ctx(ctx_tgt));
 
         return 1;
     }
 
-    if (llama_n_batch(ctx_tgt) < (int) inp.size()) {
+    if (llama_n_batch(ctx_tgt) < (uint32_t) inp.size()) {
         LOG_ERR("%s: the prompt exceeds the batch size (%d tokens, batch %d)\n", __func__, (int) inp.size(), llama_n_batch(ctx_tgt));
 
         return 1;
@@ -116,7 +119,8 @@ int main(int argc, char ** argv) {
     llama_token id_last = inp.back();
 
     // all tokens currently in the target context
-    auto prompt_tgt = std::vector<llama_token>(inp.begin(), inp.end() - 1);
+    llama_tokens prompt_tgt(inp.begin(), inp.end() - 1);
+    prompt_tgt.reserve(llama_n_ctx(ctx_tgt));
 
     int n_past = inp.size() - 1;
 
@@ -153,7 +157,7 @@ int main(int argc, char ** argv) {
         // evaluate the target model on [id_last, draft0, draft1, ..., draftN-1]
         {
             // do not waste time on small drafts
-            if (draft.size() < n_draft_min) {
+            if (draft.size() < (size_t) n_draft_min) {
                 draft.clear();
             }
 
@@ -180,54 +184,44 @@ int main(int argc, char ** argv) {
         GGML_ASSERT(ids.size() > 0); // there will always be at least one accepted token
 
         n_past    += ids.size() - 1;
-        n_drafted += batch_tgt.n_tokens - 1;
+        n_drafted += draft.size(); // note: we ignore the discarded small drafts
         n_accept  += ids.size() - 1;
+        n_predict += ids.size();
 
         // process the accepted tokens and update contexts
         //
         // this is the standard token post-processing that we normally do
         // in this case, we do it for a group of accepted tokens at once
         //
-        {
-            llama_token id;
-            std::string token_str;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            prompt_tgt.push_back(id_last);
 
-            for (size_t i = 0; i < ids.size(); ++i) {
-                id = ids[i];
+            id_last = ids[i];
 
-                ++n_predict;
-
-                if (llama_token_is_eog(model_tgt, id)) {
-                    has_eos = true;
-                    break;
-                }
-
-                token_str = common_token_to_piece(ctx_tgt, id);
-
-                if (params.use_color && i + 1 < ids.size()) {
-                    LOG("\u001b[%dm%s\u001b[37m", (36 - 0 % 6), token_str.c_str());
-                } else {
-                    LOG("%s", token_str.c_str());
-                }
-            }
-
-            if ((params.n_predict >= 0 && n_predict > params.n_predict) || has_eos) {
+            if (llama_vocab_is_eog(vocab, id_last)) {
+                has_eos = true;
                 break;
             }
 
-            LOG_DBG("accepted %d/%d draft tokens, the last target token is: (%d, '%s')\n", (int) ids.size() - 1, (int) draft.size(), id, token_str.c_str());
+            const std::string token_str = common_token_to_piece(ctx_tgt, id_last);
 
-            {
-                LOG_DBG("clear kv cache from any extra tokens, n_past = %d\n", n_past);
-
-                llama_kv_cache_seq_rm(ctx_tgt, 0, n_past, -1);
+            if (params.use_color && i + 1 < ids.size()) {
+                LOG("\u001b[%dm%s\u001b[37m", (36 - 0 % 6), token_str.c_str());
+            } else {
+                LOG("%s", token_str.c_str());
             }
+        }
 
-            prompt_tgt.push_back(id_last);
-            prompt_tgt.insert(prompt_tgt.end(), ids.begin(), ids.end() - 1);
+        LOG_DBG("accepted %d/%d draft tokens, the last target token is: (%d)\n", (int) ids.size() - 1, (int) draft.size(), id_last);
 
-            // remember the last accepted token for the next iteration
-            id_last = id;
+        {
+            LOG_DBG("clear kv cache from any extra tokens, n_past = %d\n", n_past);
+
+            llama_kv_cache_seq_rm(ctx_tgt, 0, n_past, -1);
+        }
+
+        if ((params.n_predict >= 0 && n_predict > params.n_predict) || has_eos) {
+            break;
         }
     }
 
@@ -258,12 +252,6 @@ int main(int argc, char ** argv) {
 
     common_sampler_free(smpl);
     common_speculative_free(spec);
-
-    llama_free(ctx_tgt);
-    llama_free_model(model_tgt);
-
-    llama_free(ctx_dft);
-    llama_free_model(model_dft);
 
     llama_backend_free();
 

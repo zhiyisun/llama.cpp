@@ -6,6 +6,10 @@ find_package(Threads REQUIRED)
 
 # ...
 
+# flags
+
+llama_add_compile_flags()
+
 # examples
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -16,7 +20,12 @@ else()
     add_subdirectory(batched)
     add_subdirectory(embedding)
     add_subdirectory(eval-callback)
-    add_subdirectory(gbnf-validator)
+
+    if (NOT WIN32)
+        # disabled on Windows because it uses internal functions not exported with LLAMA_API
+        add_subdirectory(gbnf-validator)
+    endif()
+
     add_subdirectory(gguf-hash)
     add_subdirectory(gguf-split)
     add_subdirectory(gguf)
@@ -36,17 +45,23 @@ else()
         add_subdirectory(server)
     endif()
     add_subdirectory(save-load-state)
+    add_subdirectory(run)
     add_subdirectory(simple)
     add_subdirectory(simple-chat)
     add_subdirectory(speculative)
     add_subdirectory(speculative-simple)
     add_subdirectory(tokenize)
+    add_subdirectory(tts)
+    add_subdirectory(gen-docs)
     if (NOT GGML_BACKEND_DL)
         # these examples use the backends directly and cannot be built with dynamic loading
         add_subdirectory(convert-llama2c-to-ggml)
         add_subdirectory(cvector-generator)
         add_subdirectory(export-lora)
-        add_subdirectory(quantize-stats)
+        if (NOT WIN32)
+            # disabled on Windows because it uses internal functions not exported with LLAMA_API
+            add_subdirectory(quantize-stats)
+        endif()
         add_subdirectory(llava)
         if (GGML_RPC)
             add_subdirectory(rpc)
