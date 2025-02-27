@@ -630,7 +630,7 @@ private:
     // members
     //
 
-    llama_kv_cache kv_self;
+    std::unique_ptr<llama_kv_cache_unified> kv_self;
 };
 
 // a recurrent transformer (ie.e RWKV, Mamba)
@@ -745,7 +745,7 @@ private:
     //
 
     // TODO: change name to something more meaningful -- does "KV cache" make sense for recurrent models?
-    llama_kv_cache_recurrent kv_self;
+    std::unique_ptr<llama_kv_cache_recurrent> kv_self;
 };
 
 // TODO: tmp - need something better to pass the data from the encoder to the decoder

@@ -6,17 +6,16 @@
 #include "llama-model.h"
 
 #include <algorithm>
-#include <cassert>
 #include <limits>
 #include <map>
 #include <stdexcept>
 
 static const llama_kv_cache_slot_info llama_kv_cache_slot_info_failed{false};
 
-llama_kv_cache::llama_kv_cache(const llama_hparams & hparams) : hparams(hparams) {
+llama_kv_cache_unified::llama_kv_cache_unified(const llama_hparams & hparams) : hparams(hparams) {
 }
 
-bool llama_kv_cache::init(
+bool llama_kv_cache_unified::init(
         const llama_model & model,
       const llama_cparams & cparams,
                 ggml_type   type_k,
@@ -123,7 +122,7 @@ bool llama_kv_cache::init(
     return true;
 }
 
-int32_t llama_kv_cache::n_tokens() const {
+int32_t llama_kv_cache_unified::n_tokens() const {
     int32_t result = 0;
 
     for (uint32_t i = 0; i < size; i++) {
@@ -133,7 +132,11 @@ int32_t llama_kv_cache::n_tokens() const {
     return result;
 }
 
-size_t llama_kv_cache::total_size() const {
+uint32_t llama_kv_cache_unified::used_cells() const {
+    return used;
+}
+
+size_t llama_kv_cache_unified::total_size() const {
     size_t size = 0;
     for (const auto & buf : bufs) {
         size += ggml_backend_buffer_get_size(buf.get());
@@ -142,7 +145,7 @@ size_t llama_kv_cache::total_size() const {
     return size;
 }
 
-llama_pos llama_kv_cache::pos_max() const {
+llama_pos llama_kv_cache_unified::pos_max() const {
     llama_pos pos_max = -1;
     for (const auto & cell : cells) {
         pos_max = std::max(pos_max, cell.pos);
@@ -151,7 +154,7 @@ llama_pos llama_kv_cache::pos_max() const {
     return pos_max;
 }
 
-void llama_kv_cache::clear() {
+void llama_kv_cache_unified::clear() {
     for (int32_t i = 0; i < (int32_t) size; ++i) {
         cells[i].pos = -1;
         cells[i].seq_id.clear();
@@ -166,7 +169,7 @@ void llama_kv_cache::clear() {
     }
 }
 
-bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+bool llama_kv_cache_unified::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
     uint32_t new_head = size;
 
     if (p0 < 0) {
@@ -237,7 +240,7 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
     return true;
 }
 
-void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
+void llama_kv_cache_unified::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
     if (seq_id_src == seq_id_dst) {
         return;
     }
@@ -288,7 +291,7 @@ void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, ll
     }
 }
 
-void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
+void llama_kv_cache_unified::seq_keep(llama_seq_id seq_id) {
     uint32_t new_head = size;
 
     for (uint32_t i = 0; i < size; ++i) {
@@ -320,7 +323,7 @@ void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
     }
 }
 
-void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos delta) {
+void llama_kv_cache_unified::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos delta) {
     if (delta == 0) {
         return;
     }
@@ -378,7 +381,7 @@ void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, ll
     head = new_head != size ? new_head : 0;
 }
 
-void llama_kv_cache::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, int d) {
+void llama_kv_cache_unified::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, int d) {
     if (d == 1) {
         return;
     }
@@ -424,7 +427,7 @@ void llama_kv_cache::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, in
     }
 }
 
-llama_pos llama_kv_cache::seq_pos_max(llama_seq_id seq_id) {
+llama_pos llama_kv_cache_unified::seq_pos_max(llama_seq_id seq_id) {
     llama_pos result = 0;
 
     for (uint32_t i = 0; i < size; ++i) {
@@ -436,13 +439,17 @@ llama_pos llama_kv_cache::seq_pos_max(llama_seq_id seq_id) {
     return result;
 }
 
-void llama_kv_cache::defrag() {
+void llama_kv_cache_unified::defrag() {
     if (!recurrent) {
         do_defrag = true;
     }
 }
 
-struct llama_kv_cache_slot_info llama_kv_cache::find_slot(
+bool llama_kv_cache_unified::get_can_shift() const {
+    return can_shift;
+}
+
+struct llama_kv_cache_slot_info llama_kv_cache_unified::find_slot(
        const struct llama_ubatch & ubatch) {
     const uint32_t n_tokens = ubatch.n_tokens;
     const uint32_t n_seqs   = ubatch.n_seqs;
@@ -663,12 +670,12 @@ struct llama_kv_cache_slot_info llama_kv_cache::find_slot(
     return llama_kv_cache_slot_info(head, head + n_tokens);
 }
 
-uint32_t llama_kv_cache::get_padding(const llama_cparams & cparams) const {
+uint32_t llama_kv_cache_unified::get_padding(const llama_cparams & cparams) const {
     // the FA kernels require padding to avoid extra runtime boundary checks
     return cparams.flash_attn ? 256u : 32u;
 }
 
-uint32_t llama_kv_cache::cell_max() const {
+uint32_t llama_kv_cache_unified::cell_max() const {
     for (uint32_t i = size; i > 0; --i) {
         const llama_kv_cell & cell = cells[i - 1];
 
@@ -680,7 +687,7 @@ uint32_t llama_kv_cache::cell_max() const {
     return 0;
 }
 
-size_t llama_kv_cache::size_k_bytes() const {
+size_t llama_kv_cache_unified::size_k_bytes() const {
     size_t size_k_bytes = 0;
 
     for (const auto & k : k_l) {
@@ -690,7 +697,7 @@ size_t llama_kv_cache::size_k_bytes() const {
     return size_k_bytes;
 }
 
-size_t llama_kv_cache::size_v_bytes() const {
+size_t llama_kv_cache_unified::size_v_bytes() const {
     size_t size_v_bytes = 0;
 
     for (const auto & v : v_l) {
@@ -700,7 +707,7 @@ size_t llama_kv_cache::size_v_bytes() const {
     return size_v_bytes;
 }
 
-void llama_kv_cache::state_write(llama_io_write_i & io, llama_seq_id seq_id) const {
+void llama_kv_cache_unified::state_write(llama_io_write_i & io, llama_seq_id seq_id) const {
     std::vector<std::pair<uint32_t, uint32_t>> cell_ranges; // ranges, from inclusive, to exclusive
     uint32_t cell_count = 0;
 
@@ -738,7 +745,7 @@ void llama_kv_cache::state_write(llama_io_write_i & io, llama_seq_id seq_id) con
     state_write_data(io, cell_ranges);
 }
 
-void llama_kv_cache::state_read(llama_io_read_i & io, llama_seq_id seq_id) {
+void llama_kv_cache_unified::state_read(llama_io_read_i & io, llama_seq_id seq_id) {
     uint32_t cell_count;
     io.read_to(&cell_count, sizeof(cell_count));
 
@@ -756,7 +763,7 @@ void llama_kv_cache::state_read(llama_io_read_i & io, llama_seq_id seq_id) {
     }
 }
 
-void llama_kv_cache::state_write_meta(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges, llama_seq_id seq_id) const {
+void llama_kv_cache_unified::state_write_meta(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges, llama_seq_id seq_id) const {
     for (const auto & range : cell_ranges) {
         for (uint32_t i = range.first; i < range.second; ++i) {
             const auto & cell = cells[i];
@@ -775,7 +782,7 @@ void llama_kv_cache::state_write_meta(llama_io_write_i & io, const std::vector<s
     }
 }
 
-void llama_kv_cache::state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges) const {
+void llama_kv_cache_unified::state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges) const {
     const uint32_t v_trans = this->v_trans ? 1 : 0;
     const uint32_t n_layer = hparams.n_layer;
 
@@ -855,7 +862,7 @@ void llama_kv_cache::state_write_data(llama_io_write_i & io, const std::vector<s
     }
 }
 
-bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id) {
+bool llama_kv_cache_unified::state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id) {
     if (dest_seq_id != -1) {
         // single sequence
 
@@ -921,7 +928,7 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t cell_count, 
                 llama_seq_id seq_id;
                 io.read_to(&seq_id, sizeof(seq_id));
 
-                // TODO: llama_kv_cache should have a notion of max sequences
+                // TODO: llama_kv_cache_unified should have a notion of max sequences
                 //if (seq_id < 0 || (uint32_t) seq_id >= llama_n_seq_max(ctx)) {
                 if (seq_id < 0) {
                     //LLAMA_LOG_ERROR("%s: invalid seq_id, %d is out of range [0, %u)\n", __func__, seq_id, llama_n_seq_max(ctx));
@@ -957,7 +964,7 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t cell_count, 
     return true;
 }
 
-bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t cell_count) {
+bool llama_kv_cache_unified::state_read_data(llama_io_read_i & io, uint32_t cell_count) {
     uint32_t v_trans;
     uint32_t n_layer;
     io.read_to(&v_trans, sizeof(v_trans));
@@ -1092,7 +1099,7 @@ int32_t llama_kv_cache_used_cells(const llama_kv_cache * kv) {
         return 0;
     }
 
-    return kv->used;
+    return kv->used_cells();
 }
 
 void llama_kv_cache_clear(llama_kv_cache * kv) {
@@ -1183,7 +1190,7 @@ bool llama_kv_cache_can_shift(const llama_kv_cache * kv) {
         return false;
     }
 
-    return kv->can_shift;
+    return kv->get_can_shift();
 }
 
 //
@@ -1216,9 +1223,16 @@ void llama_kv_cache_view_free(struct llama_kv_cache_view * view) {
     }
 }
 
-void llama_kv_cache_view_update(struct llama_kv_cache_view * view, const struct llama_kv_cache & kv) {
-    if (uint32_t(view->n_cells) < kv.size || view->cells == nullptr) {
-        view->n_cells = int32_t(kv.size);
+void llama_kv_cache_view_update(struct llama_kv_cache_view * view, const struct llama_kv_cache * kv) {
+    // TODO: rework this in the future, for now quick hack
+    const llama_kv_cache_unified * kvu = dynamic_cast<const llama_kv_cache_unified *>(kv);
+    if (kvu == nullptr) {
+        LLAMA_LOG_ERROR("%s: the kv_cache_view currently works only with llama_kv_cache_unified\n", __func__);
+        return;
+    }
+
+    if (uint32_t(view->n_cells) < kvu->size || view->cells == nullptr) {
+        view->n_cells = int32_t(kvu->size);
         void * p = realloc(view->cells, sizeof(struct llama_kv_cache_view_cell) * view->n_cells);
         GGML_ASSERT(p != nullptr && "Failed to alloc kv_cache_view cells");
         view->cells = (struct llama_kv_cache_view_cell *)p;
@@ -1227,7 +1241,7 @@ void llama_kv_cache_view_update(struct llama_kv_cache_view * view, const struct 
         view->cells_sequences = (llama_seq_id *)p;
     }
 
-    const std::vector<llama_kv_cell> & kv_cells = kv.cells;
+    const std::vector<llama_kv_cell> & kv_cells = kvu->cells;
     llama_kv_cache_view_cell * c_curr = view->cells;
     llama_seq_id * cs_curr = view->cells_sequences;
     int32_t used_cells = 0;
@@ -1236,7 +1250,7 @@ void llama_kv_cache_view_update(struct llama_kv_cache_view * view, const struct 
     uint32_t max_contig = 0;
     int32_t max_contig_idx = -1;
 
-    for (int32_t i = 0; i < int32_t(kv.size); i++, c_curr++, cs_curr += view->n_seq_max) {
+    for (int32_t i = 0; i < int32_t(kvu->size); i++, c_curr++, cs_curr += view->n_seq_max) {
         const size_t curr_size = kv_cells[i].seq_id.size();
         token_count += curr_size;
         c_curr->pos = kv_cells[i].pos + kv_cells[i].delta;
@@ -1274,8 +1288,8 @@ void llama_kv_cache_view_update(struct llama_kv_cache_view * view, const struct 
     view->max_contiguous_idx = max_contig_idx;
     view->token_count = token_count;
     view->used_cells = used_cells;
-    if (uint32_t(used_cells) != kv.used) {
+    if (uint32_t(used_cells) != kvu->used) {
         LLAMA_LOG_ERROR("%s: used cells mismatch. kv_cache says %d but we calculated %d\n",
-            __func__, kv.used, used_cells);
+            __func__, kvu->used, used_cells);
     }
 }
