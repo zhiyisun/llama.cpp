@@ -750,8 +750,13 @@ private:
 
 // TODO: tmp - need something better to pass the data from the encoder to the decoder
 struct llama_cross {
-    // the output embeddings from the encoder
+    // the output embeddings from the encoder as a ggml tensor
+    // TODO: this needs more work to be correct, for now copy the embeddings data to host memory
+    //       ref: https://github.com/ggml-org/llama.cpp/pull/11213#discussion_r1969892524
     ggml_tensor * t_embd = nullptr;
+
+    // embeddings data copied to host memory (tmp)
+    float * v_embd = nullptr;
 
     // needed to construct the cross-attention mask in the decoder
     std::vector<std::set<llama_seq_id>> seq_ids_enc;
