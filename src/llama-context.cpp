@@ -101,6 +101,7 @@ void llama_graph_input_pos_bucket::set_input(const llama_ubatch * ubatch) {
     }
 }
 
+// note: this does not depend on the context and can technically be moved to llama-model.cpp
 class llama_graph_input_attn_base : public llama_graph_input_attn_i {
 public:
     llama_graph_input_attn_base(const llama_hparams & hparams, const llama_cparams & cparams) :

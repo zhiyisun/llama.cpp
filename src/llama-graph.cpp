@@ -19,6 +19,14 @@ ggml_tensor * llama_graph_input_attn_i::get_kq_mask_cross() {
 
 llama_graph_i::llama_graph_i(llama_graph_type type) : type(type) {}
 
+llama_graph_input_ptr llama_graph_i::build_inp_cross_embd(
+            ggml_context * ctx0) const {
+    GGML_UNUSED(ctx0);
+
+    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
+    return nullptr;
+}
+
 ggml_tensor * llama_graph_i::build_attn(
         llama_graph_input_attn_i * inp,
         ggml_context * ctx0,
@@ -62,14 +70,6 @@ ggml_tensor * llama_graph_i::build_attn_cross(
     GGML_UNUSED(kq_b);
     GGML_UNUSED(kq_scale);
     GGML_UNUSED(il);
-
-    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
-    return nullptr;
-}
-
-llama_graph_input_ptr llama_graph_i::build_inp_cross_embd(
-            ggml_context * ctx0) const {
-    GGML_UNUSED(ctx0);
 
     LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
     return nullptr;
