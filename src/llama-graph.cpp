@@ -68,25 +68,19 @@ ggml_tensor * llama_graph_i::build_attn_cross(
 }
 
 ggml_tensor * llama_graph_i::build_inp_cross_embd(
-        ggml_context * ctx0) {
+      llama_graph_result * res,
+            ggml_context * ctx0) const {
+    GGML_UNUSED(res);
     GGML_UNUSED(ctx0);
-
-    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
-    return nullptr;
-}
-
-ggml_tensor * llama_graph_i::build_inp_cross_kq_mask(
-        ggml_context * ctx0,
-             int32_t   n_tokens) {
-    GGML_UNUSED(ctx0);
-    GGML_UNUSED(n_tokens);
 
     LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
     return nullptr;
 }
 
 ggml_tensor * llama_graph_i::build_inp_s_copy (
-        ggml_context * ctx0) {
+      llama_graph_result * res,
+            ggml_context * ctx0) const {
+    GGML_UNUSED(res);
     GGML_UNUSED(ctx0);
 
     LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
@@ -95,7 +89,9 @@ ggml_tensor * llama_graph_i::build_inp_s_copy (
 }
 
 ggml_tensor * llama_graph_i::build_inp_s_mask(
-        ggml_context * ctx0) {
+      llama_graph_result * res,
+            ggml_context * ctx0) const {
+    GGML_UNUSED(res);
     GGML_UNUSED(ctx0);
 
     LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
@@ -104,13 +100,13 @@ ggml_tensor * llama_graph_i::build_inp_s_mask(
 }
 
 ggml_tensor * llama_graph_i::build_copy_mask_state(
-        ggml_context * ctx0,
-         ggml_cgraph * gf,
-         ggml_tensor * s,
-         ggml_tensor * state_copy,
-         ggml_tensor * state_mask,
-             int32_t   n_state,
-             int32_t   n_seqs) {
+            ggml_context * ctx0,
+             ggml_cgraph * gf,
+             ggml_tensor * s,
+             ggml_tensor * state_copy,
+             ggml_tensor * state_mask,
+                 int32_t   n_state,
+                 int32_t   n_seqs) const {
     GGML_UNUSED(ctx0);
     GGML_UNUSED(gf);
     GGML_UNUSED(s);
@@ -125,13 +121,13 @@ ggml_tensor * llama_graph_i::build_copy_mask_state(
 }
 
 ggml_tensor * llama_graph_i::build_mamba_layer(
-        ggml_context * ctx0,
-         ggml_cgraph * gf,
-         ggml_tensor * cur,
-         ggml_tensor * state_copy,
-         ggml_tensor * state_mask,
-  const llama_ubatch & ubatch,
-                 int   il) {
+            ggml_context * ctx0,
+             ggml_cgraph * gf,
+             ggml_tensor * cur,
+             ggml_tensor * state_copy,
+             ggml_tensor * state_mask,
+      const llama_ubatch & ubatch,
+                     int   il) const {
     GGML_UNUSED(ctx0);
     GGML_UNUSED(gf);
     GGML_UNUSED(cur);
@@ -146,12 +142,12 @@ ggml_tensor * llama_graph_i::build_mamba_layer(
 }
 
 ggml_tensor * llama_graph_i::build_rwkv_token_shift_load(
-        ggml_context * ctx0,
-         ggml_cgraph * gf,
-         ggml_tensor * state_copy,
-         ggml_tensor * state_mask,
-  const llama_ubatch & ubatch,
-                 int   il) {
+            ggml_context * ctx0,
+             ggml_cgraph * gf,
+             ggml_tensor * state_copy,
+             ggml_tensor * state_mask,
+      const llama_ubatch & ubatch,
+                     int   il) const {
     GGML_UNUSED(ctx0);
     GGML_UNUSED(gf);
     GGML_UNUSED(state_copy);
@@ -165,10 +161,10 @@ ggml_tensor * llama_graph_i::build_rwkv_token_shift_load(
 }
 
 ggml_tensor * llama_graph_i::build_rwkv_token_shift_store(
-        ggml_context * ctx0,
-         ggml_tensor * token_shift,
-  const llama_ubatch & ubatch,
-                 int   il) {
+            ggml_context * ctx0,
+             ggml_tensor * token_shift,
+      const llama_ubatch & ubatch,
+                     int   il) const {
     GGML_UNUSED(ctx0);
     GGML_UNUSED(token_shift);
     GGML_UNUSED(ubatch);
@@ -180,14 +176,14 @@ ggml_tensor * llama_graph_i::build_rwkv_token_shift_store(
 }
 
 ggml_tensor * llama_graph_i::build_rwkv6_time_mix(
-        ggml_context * ctx0,
-         ggml_cgraph * gf,
-         ggml_tensor * cur,
-         ggml_tensor * x_prev,
-         ggml_tensor * state_copy,
-         ggml_tensor * state_mask,
-  const llama_ubatch & ubatch,
-                 int   il) {
+            ggml_context * ctx0,
+             ggml_cgraph * gf,
+             ggml_tensor * cur,
+             ggml_tensor * x_prev,
+             ggml_tensor * state_copy,
+             ggml_tensor * state_mask,
+      const llama_ubatch & ubatch,
+                     int   il) const {
     GGML_UNUSED(ctx0);
     GGML_UNUSED(gf);
     GGML_UNUSED(cur);

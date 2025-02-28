@@ -3910,7 +3910,7 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_inp_pos() {
-        ggml_tensor * cur = lgf->build_inp_pos(ctx0, n_tokens);
+        ggml_tensor * cur = lgf->build_inp_pos(res.get(), ctx0, n_tokens);
         cb(cur, "inp_pos", -1);
 
         return cur;
@@ -3918,7 +3918,7 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_inp_out_ids() {
-        ggml_tensor * cur = lgf->build_inp_out_ids(ctx0);
+        ggml_tensor * cur = lgf->build_inp_out_ids(res.get(), ctx0);
         cb(cur, "inp_out_ids", -1);
 
         return cur;
@@ -3926,7 +3926,7 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_inp_mean() {
-        ggml_tensor * cur = lgf->build_inp_mean(ctx0, n_tokens);
+        ggml_tensor * cur = lgf->build_inp_mean(res.get(), ctx0, n_tokens);
         cb(cur, "inp_mean", -1);
 
         return cur;
@@ -3934,7 +3934,7 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_inp_cls() {
-        ggml_tensor * cur = lgf->build_inp_cls(ctx0, n_tokens);
+        ggml_tensor * cur = lgf->build_inp_cls(res.get(), ctx0, n_tokens);
         cb(cur, "inp_cls", -1);
 
         return cur;
@@ -3957,7 +3957,7 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_pos_bucket() {
-        ggml_tensor * cur = lgf->build_inp_pos_bucket(ctx0, n_tokens);
+        ggml_tensor * cur = lgf->build_inp_pos_bucket(res.get(), ctx0, n_tokens);
         cb(cur, "pos_bucket", -1);
 
         return cur;
@@ -3965,16 +3965,8 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_inp_cross_embd() {
-        ggml_tensor * cur = lgf->build_inp_cross_embd(ctx0);
+        ggml_tensor * cur = lgf->build_inp_cross_embd(res.get(), ctx0);
         cb(cur, "embd_enc", -1);
-
-        return cur;
-    }
-
-    // TODO: tmp
-    struct ggml_tensor * build_inp_cross_kq_mask() {
-        ggml_tensor * cur = lgf->build_inp_cross_kq_mask(ctx0, n_tokens);
-        cb(cur, "KQ_mask_cross", -1);
 
         return cur;
     }
@@ -3986,8 +3978,8 @@ struct llm_build_context {
                   llm_norm_type   type,
                             int   il) {
         switch (type) {
-            case LLM_NORM:       cur = ggml_norm      (ctx0, cur, hparams.f_norm_eps);     break;
-            case LLM_NORM_RMS:   cur = ggml_rms_norm  (ctx0, cur, hparams.f_norm_rms_eps); break;
+            case LLM_NORM:       cur = ggml_norm    (ctx0, cur, hparams.f_norm_eps);     break;
+            case LLM_NORM_RMS:   cur = ggml_rms_norm(ctx0, cur, hparams.f_norm_rms_eps); break;
             case LLM_NORM_GROUP:
                 {
                     cur = ggml_reshape_3d(ctx0, cur, cur->ne[0], 1, cur->ne[1]);
@@ -8070,8 +8062,8 @@ struct llm_build_context {
         // {n_embd, n_tokens}
         inpL = build_inp_embd(model.tok_embd);
 
-        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(ctx0);
-        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(ctx0);
+        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(res.get(), ctx0);
+        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(res.get(), ctx0);
 
         for (int il = 0; il < n_layer; ++il) {
             // norm
@@ -10443,8 +10435,8 @@ struct llm_build_context {
         inpL = build_inp_embd(model.tok_embd);
         inpL = build_norm(inpL, model.tok_norm, model.tok_norm_b, LLM_NORM, -1);
 
-        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(ctx0);
-        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(ctx0);
+        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(res.get(), ctx0);
+        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(res.get(), ctx0);
 
         const auto n_embd = hparams.n_embd;
         const auto n_seq_tokens = ubatch.n_seq_tokens;
@@ -10535,8 +10527,8 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(ctx0);
-        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(ctx0);
+        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(res.get(), ctx0);
+        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(res.get(), ctx0);
 
         const auto n_embd = hparams.n_embd;
         const auto n_seq_tokens = ubatch.n_seq_tokens;

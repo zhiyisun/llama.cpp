@@ -93,6 +93,7 @@ public:
 //
 
 // TODO: can become more granular in the future
+// TODO: move all methods that do not require things from llama_context to llm_build_context
 class llama_graph_i {
 public:
     llama_graph_i(llama_graph_type type);
@@ -109,28 +110,28 @@ public:
              ggml_tensor * cur,
               const char * name,
       const llama_ubatch & ubatch,
-                     int   il) = 0;
+                     int   il) const = 0;
 
     // apply control vector for layer il
     virtual ggml_tensor * build_cvec(
             ggml_context * ctx0,
              ggml_tensor * cur,
-                     int   il) = 0;
+                     int   il) const = 0;
 
     // do mat_mul, while optionally apply lora
     virtual ggml_tensor * build_lora_mm(
             ggml_context * ctx0,
              ggml_tensor * w,
-             ggml_tensor * cur) = 0;
+             ggml_tensor * cur) const = 0;
 
     // do mat_mul_id, while optionally apply lora
     virtual ggml_tensor * build_lora_mm_id(
             ggml_context * ctx0,
              ggml_tensor * w,   // struct ggml_tensor * as
              ggml_tensor * cur, // struct ggml_tensor * b
-             ggml_tensor * ids) = 0;
+             ggml_tensor * ids) const = 0;
 
-    virtual ggml_tensor * build_rope_factors(int il) = 0;
+    virtual ggml_tensor * build_rope_factors(int il) const = 0;
 
     // note: optionally set the backend to be the same as the bbuf's backend
     virtual ggml_tensor * build_rope_shift(
@@ -138,7 +139,7 @@ public:
              ggml_tensor * cur,
              ggml_tensor * shift,
              ggml_tensor * factors,
-             ggml_backend_buffer * bbuf) = 0;
+             ggml_backend_buffer * bbuf) const = 0;
 
     // graph build API (context-specific)
 
@@ -146,26 +147,31 @@ public:
       llama_graph_result * res,
             ggml_context * ctx0,
              ggml_tensor * tok_embd,
-      const llama_ubatch & ubatch) const = 0; // note these methods will become const, i.e. they don't mutate the llama_context that implements them
+      const llama_ubatch & ubatch) const = 0;
 
     virtual ggml_tensor * build_inp_pos(
+      llama_graph_result * res,
             ggml_context * ctx0,
-                 int32_t   n_tokens) = 0;
+                 int32_t   n_tokens) const = 0;
 
     virtual ggml_tensor * build_inp_pos_bucket(
+      llama_graph_result * res,
             ggml_context * ctx0,
-                 int32_t   n_tokens) = 0;
+                 int32_t   n_tokens) const = 0;
 
     virtual ggml_tensor * build_inp_out_ids(
-            ggml_context * ctx0) = 0;
+      llama_graph_result * res,
+            ggml_context * ctx0) const = 0;
 
     virtual ggml_tensor * build_inp_mean(
+      llama_graph_result * res,
             ggml_context * ctx0,
-                 int32_t   n_tokens) = 0;
+                 int32_t   n_tokens) const = 0;
 
     virtual ggml_tensor * build_inp_cls(
+      llama_graph_result * res,
             ggml_context * ctx0,
-                 int32_t   n_tokens) = 0;
+                 int32_t   n_tokens) const = 0;
 
     virtual llama_graph_input_attn_ptr build_attn_inp(
       llama_graph_result * res,
@@ -197,17 +203,16 @@ public:
                  int       il) const;
 
     virtual ggml_tensor * build_inp_cross_embd(
-            ggml_context * ctx0);
-
-    virtual ggml_tensor * build_inp_cross_kq_mask(
-            ggml_context * ctx0,
-                 int32_t   n_tokens);
+      llama_graph_result * res,
+            ggml_context * ctx0) const;
 
     virtual ggml_tensor * build_inp_s_copy(
-            ggml_context * ctx0);
+      llama_graph_result * res,
+            ggml_context * ctx0) const;
 
     virtual ggml_tensor * build_inp_s_mask(
-            ggml_context * ctx0);
+      llama_graph_result * res,
+            ggml_context * ctx0) const;
 
     virtual ggml_tensor * build_copy_mask_state(
             ggml_context * ctx0,
@@ -216,7 +221,7 @@ public:
              ggml_tensor * state_copy,
              ggml_tensor * state_mask,
                  int32_t   n_state,
-                 int32_t   n_seqs);
+                 int32_t   n_seqs) const;
 
     virtual ggml_tensor * build_mamba_layer(
             ggml_context * ctx0,
@@ -225,7 +230,7 @@ public:
              ggml_tensor * state_copy,
              ggml_tensor * state_mask,
       const llama_ubatch & ubatch,
-                     int   il);
+                     int   il) const;
 
     virtual ggml_tensor * build_rwkv_token_shift_load(
             ggml_context * ctx0,
@@ -233,13 +238,13 @@ public:
              ggml_tensor * state_copy,
              ggml_tensor * state_mask,
       const llama_ubatch & ubatch,
-                     int   il);
+                     int   il) const;
 
     virtual ggml_tensor * build_rwkv_token_shift_store(
             ggml_context * ctx0,
              ggml_tensor * token_shift,
       const llama_ubatch & ubatch,
-                     int   il);
+                     int   il) const;
 
     virtual ggml_tensor * build_rwkv6_time_mix(
             ggml_context * ctx0,
@@ -249,5 +254,5 @@ public:
              ggml_tensor * state_copy,
              ggml_tensor * state_mask,
       const llama_ubatch & ubatch,
-                     int   il);
+                     int   il) const;
 };

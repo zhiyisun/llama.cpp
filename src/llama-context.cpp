@@ -71,6 +71,243 @@ void llama_graph_input_embd::set_input(const llama_ubatch * ubatch) {
     }
 }
 
+class llama_graph_input_pos : public llama_graph_input_i {
+public:
+    llama_graph_input_pos(int64_t n_pos_per_token) : n_pos_per_token(n_pos_per_token) {}
+    virtual ~llama_graph_input_pos() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * pos = nullptr; // I32 [n_batch]
+
+    const int64_t n_pos_per_token = 1;
+};
+
+void llama_graph_input_pos::set_input(const llama_ubatch * ubatch) {
+    if (ubatch->pos && pos) {
+        const int64_t n_tokens = ubatch->n_tokens;
+
+        ggml_backend_tensor_set(pos, ubatch->pos, 0, n_tokens*n_pos_per_token*ggml_element_size(pos));
+    }
+}
+
+class llama_graph_input_pos_bucket : public llama_graph_input_i {
+public:
+    llama_graph_input_pos_bucket(const llama_hparams & hparams) : hparams(hparams) {}
+    virtual ~llama_graph_input_pos_bucket() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * pos_bucket; // I32 [n_batch, n_batch]
+
+    const llama_hparams & hparams;
+};
+
+void llama_graph_input_pos_bucket::set_input(const llama_ubatch * ubatch) {
+    if (pos_bucket) {
+        const int64_t n_tokens = ubatch->n_tokens;
+
+        GGML_ASSERT(ggml_backend_buffer_is_host(pos_bucket->buffer));
+        GGML_ASSERT(!ubatch->equal_seqs); // TODO: use ubatch->n_seqs instead of failing
+
+        int32_t * data = (int32_t *) pos_bucket->data;
+
+        for (int h = 0; h < 1; ++h) {
+            for (int j = 0; j < n_tokens; ++j) {
+                for (int i = 0; i < n_tokens; ++i) {
+                    data[h*(n_tokens*n_tokens) + j*n_tokens + i] = llama_relative_position_bucket(ubatch->pos[i], ubatch->pos[j], hparams.n_rel_attn_bkts, true);
+                }
+            }
+        }
+    }
+}
+
+class llama_graph_input_out_ids : public llama_graph_input_i {
+public:
+    llama_graph_input_out_ids(
+            const llama_hparams & hparams,
+            const llama_cparams & cparams,
+            int32_t n_outputs) : hparams(hparams), cparams(cparams), n_outputs(n_outputs) {}
+    virtual ~llama_graph_input_out_ids() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * out_ids; // I32 [n_outputs]
+
+    const llama_hparams & hparams;
+    const llama_cparams & cparams;
+
+    const int32_t n_outputs;
+};
+
+void llama_graph_input_out_ids::set_input(const llama_ubatch * ubatch) {
+    if (hparams.causal_attn || cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
+        //GGML_ASSERT(out_ids && "every model that can must skip unused outputs");
+
+        if (!out_ids) {
+            LLAMA_LOG_WARN("%s: 'out_ids' is not created\n", __func__);
+        } else {
+            const int64_t n_tokens = ubatch->n_tokens;
+
+            GGML_ASSERT(ggml_backend_buffer_is_host(out_ids->buffer));
+            int32_t * data = (int32_t *) out_ids->data;
+
+            if (n_outputs == n_tokens) {
+                for (int i = 0; i < n_tokens; ++i) {
+                    data[i] = i;
+                }
+            } else if (ubatch->output) {
+                int32_t n_outputs = 0;
+                for (int i = 0; i < n_tokens; ++i) {
+                    if (ubatch->output[i]) {
+                        data[n_outputs++] = i;
+                    }
+                }
+                // the graph needs to have been passed the correct number of outputs
+                GGML_ASSERT(n_outputs == n_outputs);
+            } else if (n_outputs == 1) {
+                // only keep last output
+                data[0] = n_tokens - 1;
+            } else {
+                GGML_ASSERT(n_outputs == 0);
+            }
+        }
+    }
+}
+
+class llama_graph_input_mean : public llama_graph_input_i {
+public:
+    llama_graph_input_mean(const llama_cparams & cparams) : cparams(cparams) {}
+    virtual ~llama_graph_input_mean() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * mean; // F32 [n_batch, n_batch]
+
+    const llama_cparams & cparams;
+};
+
+void llama_graph_input_mean::set_input(const llama_ubatch * ubatch) {
+    if (cparams.embeddings && cparams.pooling_type == LLAMA_POOLING_TYPE_MEAN) {
+        const int64_t n_tokens     = ubatch->n_tokens;
+        const int64_t n_seq_tokens = ubatch->n_seq_tokens;
+        const int64_t n_seqs       = ubatch->n_seqs;
+
+        GGML_ASSERT(mean);
+        GGML_ASSERT(ggml_backend_buffer_is_host(mean->buffer));
+
+        float * data = (float *) mean->data;
+        memset(mean->data, 0, n_tokens * n_tokens * ggml_element_size(mean));
+
+        std::vector<uint64_t> sum(n_tokens, 0);
+
+        for (int s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = ubatch->seq_id[s][0];
+
+            // TODO: adapt limits to n_seqs when ubatch->equal_seqs is true
+            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == MEAN");
+
+            sum[seq_id] += ubatch->n_seq_tokens;
+        }
+
+        std::vector<float> div(n_tokens, 0.0f);
+        for (int i = 0; i < n_tokens; ++i) {
+            const uint64_t s = sum[i];
+            if (s > 0) {
+                div[i] = 1.0f/float(s);
+            }
+        }
+
+        for (int s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = ubatch->seq_id[s][0];
+
+            for (int i = 0; i < n_seq_tokens; ++i) {
+                data[seq_id*n_tokens + s*n_seq_tokens + i] = div[seq_id];
+            }
+        }
+    }
+}
+
+class llama_graph_input_cls : public llama_graph_input_i {
+public:
+    llama_graph_input_cls(const llama_cparams & cparams) : cparams(cparams) {}
+    virtual ~llama_graph_input_cls() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * cls; // I32 [n_batch]
+
+    const llama_cparams & cparams;
+};
+
+void llama_graph_input_cls::set_input(const llama_ubatch * ubatch) {
+    if (cparams.embeddings && (
+                cparams.pooling_type == LLAMA_POOLING_TYPE_CLS ||
+                cparams.pooling_type == LLAMA_POOLING_TYPE_RANK)) {
+        const int64_t n_tokens     = ubatch->n_tokens;
+        const int64_t n_seq_tokens = ubatch->n_seq_tokens;
+        const int64_t n_seqs       = ubatch->n_seqs;
+
+        GGML_ASSERT(cls);
+        GGML_ASSERT(ggml_backend_buffer_is_host(cls->buffer));
+
+        uint32_t * data = (uint32_t *) cls->data;
+        memset(cls->data, 0, n_tokens * ggml_element_size(cls));
+
+        for (int s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = ubatch->seq_id[s][0];
+
+            // TODO: adapt limits to n_seqs when ubatch->equal_seqs is true
+            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == CLS or RANK");
+
+            for (int i = 0; i < n_seq_tokens; ++i) {
+                const llama_pos pos = ubatch->pos[s*n_seq_tokens + i];
+
+                if (pos == 0) {
+                    data[seq_id] = s*n_seq_tokens + i;
+                }
+            }
+        }
+    }
+
+    if (cparams.embeddings && cparams.pooling_type == LLAMA_POOLING_TYPE_LAST) {
+        const int64_t n_tokens     = ubatch->n_tokens;
+        const int64_t n_seq_tokens = ubatch->n_seq_tokens;
+        const int64_t n_seqs       = ubatch->n_seqs;
+
+        GGML_ASSERT(cls);
+        GGML_ASSERT(ggml_backend_buffer_is_host(cls->buffer));
+
+        uint32_t * data = (uint32_t *) cls->data;
+        memset(cls->data, 0, n_tokens * ggml_element_size(cls));
+
+        std::vector<int> last_pos(n_tokens, -1);
+        std::vector<int> last_row(n_tokens, -1);
+
+        for (int s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = ubatch->seq_id[s][0];
+
+            // TODO: adapt limits to n_seqs when ubatch->equal_seqs is true
+            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == LAST");
+
+            for (int i = 0; i < n_seq_tokens; ++i) {
+                const llama_pos pos = ubatch->pos[s*n_seq_tokens + i];
+
+                if (pos >= last_pos[seq_id]) {
+                    last_pos[seq_id] = pos;
+                    last_row[seq_id] = s*n_seq_tokens + i;
+                }
+            }
+        }
+
+        for (int i = 0; i < n_tokens; ++i) {
+            if (last_row[i] >= 0) {
+                data[i] = last_row[i];
+            }
+        }
+    }
+}
+
 class llama_graph_input_attn_base : public llama_graph_input_attn_i {
 public:
     llama_graph_input_attn_base(const llama_hparams & hparams, const llama_cparams & cparams) :
@@ -846,7 +1083,6 @@ int llama_context_base::encode(llama_batch & inp_batch) {
     ggml_backend_sched_alloc_graph(sched.get(), gf);
 
     res->set_inputs(&ubatch);
-    input_set(ubatch); // TODO: remove, tmp here, until all inputs are migrated outside the context
 
     const auto compute_status = graph_compute(gf, n_tokens > 1);
     switch (compute_status) {
@@ -1003,7 +1239,6 @@ int llama_context_base::decode(llama_batch & inp_batch) {
     ggml_backend_sched_alloc_graph(sched.get(), gf);
 
     res->set_inputs(&ubatch);
-    input_set(ubatch); // TODO: remove
 
     const auto compute_status = graph_compute(gf, ubatch.n_tokens > 1);
     if (compute_status != GGML_STATUS_SUCCESS) {
@@ -1132,178 +1367,6 @@ int64_t llama_context_base::n_pos_per_token() const {
     return model.arch == LLM_ARCH_QWEN2VL ? 4 : 1;
 }
 
-void llama_context_base::input_set(const llama_ubatch & ubatch) {
-    const llama_hparams & hparams = model.hparams;
-
-    if (ubatch.pos && inp.pos) {
-        const int64_t n_tokens = ubatch.n_tokens;
-
-        ggml_backend_tensor_set(inp.pos, ubatch.pos, 0, n_tokens*n_pos_per_token()*ggml_element_size(inp.pos));
-    }
-
-    if (hparams.causal_attn || cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
-        //GGML_ASSERT(inp.out_ids && "every model that can must skip unused outputs");
-
-        if (!inp.out_ids) {
-            LLAMA_LOG_WARN("%s: 'inp.out_ids' is not created\n", __func__);
-        } else {
-            const int64_t n_tokens = ubatch.n_tokens;
-
-            GGML_ASSERT(ggml_backend_buffer_is_host(inp.out_ids->buffer));
-            int32_t * data = (int32_t *) inp.out_ids->data;
-
-            if (n_outputs == n_tokens) {
-                for (int i = 0; i < n_tokens; ++i) {
-                    data[i] = i;
-                }
-            } else if (ubatch.output) {
-                int32_t n_outputs = 0;
-                for (int i = 0; i < n_tokens; ++i) {
-                    if (ubatch.output[i]) {
-                        data[n_outputs++] = i;
-                    }
-                }
-                // the graph needs to have been passed the correct number of outputs
-                GGML_ASSERT(n_outputs == n_outputs);
-            } else if (n_outputs == 1) {
-                // only keep last output
-                data[0] = n_tokens - 1;
-            } else {
-                GGML_ASSERT(n_outputs == 0);
-            }
-        }
-    }
-
-    if (cparams.embeddings && cparams.pooling_type == LLAMA_POOLING_TYPE_MEAN) {
-        const int64_t n_tokens     = ubatch.n_tokens;
-        const int64_t n_seq_tokens = ubatch.n_seq_tokens;
-        const int64_t n_seqs       = ubatch.n_seqs;
-
-        GGML_ASSERT(inp.mean);
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp.mean->buffer));
-
-        float * data = (float *) inp.mean->data;
-        memset(inp.mean->data, 0, n_tokens * n_tokens * ggml_element_size(inp.mean));
-
-        std::vector<uint64_t> sum(n_tokens, 0);
-
-        for (int s = 0; s < n_seqs; ++s) {
-            const llama_seq_id seq_id = ubatch.seq_id[s][0];
-
-            // TODO: adapt limits to n_seqs when ubatch.equal_seqs is true
-            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == MEAN");
-
-            sum[seq_id] += ubatch.n_seq_tokens;
-        }
-
-        std::vector<float> div(n_tokens, 0.0f);
-        for (int i = 0; i < n_tokens; ++i) {
-            const uint64_t s = sum[i];
-            if (s > 0) {
-                div[i] = 1.0f/float(s);
-            }
-        }
-
-        for (int s = 0; s < n_seqs; ++s) {
-            const llama_seq_id seq_id = ubatch.seq_id[s][0];
-
-            for (int i = 0; i < n_seq_tokens; ++i) {
-                data[seq_id*n_tokens + s*n_seq_tokens + i] = div[seq_id];
-            }
-        }
-    }
-
-    if (cparams.embeddings && (
-                cparams.pooling_type == LLAMA_POOLING_TYPE_CLS ||
-                cparams.pooling_type == LLAMA_POOLING_TYPE_RANK)) {
-        const int64_t n_tokens     = ubatch.n_tokens;
-        const int64_t n_seq_tokens = ubatch.n_seq_tokens;
-        const int64_t n_seqs       = ubatch.n_seqs;
-
-        GGML_ASSERT(inp.cls);
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp.cls->buffer));
-
-        uint32_t * data = (uint32_t *) inp.cls->data;
-        memset(inp.cls->data, 0, n_tokens * ggml_element_size(inp.cls));
-
-        for (int s = 0; s < n_seqs; ++s) {
-            const llama_seq_id seq_id = ubatch.seq_id[s][0];
-
-            // TODO: adapt limits to n_seqs when ubatch.equal_seqs is true
-            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == CLS or RANK");
-
-            for (int i = 0; i < n_seq_tokens; ++i) {
-                const llama_pos pos = ubatch.pos[s*n_seq_tokens + i];
-
-                if (pos == 0) {
-                    data[seq_id] = s*n_seq_tokens + i;
-                }
-            }
-        }
-    }
-
-    if (cparams.embeddings && cparams.pooling_type == LLAMA_POOLING_TYPE_LAST) {
-        const int64_t n_tokens     = ubatch.n_tokens;
-        const int64_t n_seq_tokens = ubatch.n_seq_tokens;
-        const int64_t n_seqs       = ubatch.n_seqs;
-
-        GGML_ASSERT(inp.cls);
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp.cls->buffer));
-
-        uint32_t * data = (uint32_t *) inp.cls->data;
-        memset(inp.cls->data, 0, n_tokens * ggml_element_size(inp.cls));
-
-        std::vector<int> last_pos(n_tokens, -1);
-        std::vector<int> last_row(n_tokens, -1);
-
-        for (int s = 0; s < n_seqs; ++s) {
-            const llama_seq_id seq_id = ubatch.seq_id[s][0];
-
-            // TODO: adapt limits to n_seqs when ubatch.equal_seqs is true
-            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == LAST");
-
-            for (int i = 0; i < n_seq_tokens; ++i) {
-                const llama_pos pos = ubatch.pos[s*n_seq_tokens + i];
-
-                if (pos >= last_pos[seq_id]) {
-                    last_pos[seq_id] = pos;
-                    last_row[seq_id] = s*n_seq_tokens + i;
-                }
-            }
-        }
-
-        for (int i = 0; i < n_tokens; ++i) {
-            if (last_row[i] >= 0) {
-                data[i] = last_row[i];
-            }
-        }
-    }
-
-    if (inp.pos_bucket) {
-        const int64_t n_tokens = ubatch.n_tokens;
-
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp.pos_bucket->buffer));
-        GGML_ASSERT(!ubatch.equal_seqs); // TODO: use ubatch.n_seqs instead of failing
-
-        int32_t * data = (int32_t *) inp.pos_bucket->data;
-
-        for (int h = 0; h < 1; ++h) {
-            for (int j = 0; j < n_tokens; ++j) {
-                for (int i = 0; i < n_tokens; ++i) {
-                    data[h*(n_tokens*n_tokens) + j*n_tokens + i] = llama_relative_position_bucket(ubatch.pos[i], ubatch.pos[j], hparams.n_rel_attn_bkts, true);
-                }
-            }
-        }
-    }
-
-    GGML_ASSERT(
-            // (!a || b) is a logical implication (a -> b)
-            // !hparams.causal_attn -> !cparams.causal_attn
-            (hparams.causal_attn || !cparams.causal_attn) &&
-            "causal attention is not supported by this model"
-            );
-}
-
 //
 // output
 //
@@ -1423,8 +1486,6 @@ int32_t llama_context_base::graph_max_nodes() const {
 }
 
 ggml_cgraph * llama_context_base::graph_init() {
-    inp = {};
-
     struct ggml_init_params params = {
         /*.mem_size   =*/ buf_compute_meta.size(),
         /*.mem_buffer =*/ buf_compute_meta.data(),
@@ -1478,7 +1539,7 @@ void llama_context_base::build_cb(
          ggml_tensor * cur,
           const char * name,
   const llama_ubatch & ubatch,
-                 int   il) {
+                 int   il) const {
     if (il >= 0) {
         ggml_format_name(cur, "%s-%d", name, il);
     } else {
@@ -1498,7 +1559,7 @@ void llama_context_base::build_cb(
     if (ubatch.n_tokens < 32 || full_offload) {
         if (il != -1 && strcmp(name, "norm") == 0) {
             const auto & dev_layer = model.dev_layer(il);
-            for (auto & backend : backends) {
+            for (const auto & backend : backends) {
                 if (ggml_backend_get_device(backend.get()) == dev_layer) {
                     if (ggml_backend_supports_op(backend.get(), cur)) {
                         ggml_backend_sched_set_tensor_backend(sched.get(), cur, backend.get());
@@ -1512,14 +1573,14 @@ void llama_context_base::build_cb(
 ggml_tensor * llama_context_base::build_cvec(
         ggml_context * ctx0,
          ggml_tensor * cur,
-                 int   il) {
+                 int   il) const {
     return cvec.apply_to(ctx0, cur, il);
 }
 
 ggml_tensor * llama_context_base::build_lora_mm(
         ggml_context * ctx0,
          ggml_tensor * w,
-         ggml_tensor * cur) {
+         ggml_tensor * cur) const {
     struct ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
 
     for (const auto & lora : loras) {
@@ -1547,7 +1608,7 @@ ggml_tensor * llama_context_base::build_lora_mm_id(
         ggml_context * ctx0,
          ggml_tensor * w,
          ggml_tensor * cur,
-         ggml_tensor * ids) {
+         ggml_tensor * ids) const {
     struct ggml_tensor * res = ggml_mul_mat_id(ctx0, w, cur, ids);
     for (const auto & lora : loras) {
         struct llama_adapter_lora_weight * lw = lora.first->get_weight(w);
@@ -1572,7 +1633,7 @@ ggml_tensor * llama_context_base::build_lora_mm_id(
     return res;
 }
 
-ggml_tensor * llama_context_base::build_rope_factors(int il) {
+ggml_tensor * llama_context_base::build_rope_factors(int il) const {
     const auto & hparams = model.hparams;
 
     // choose long/short freq factors based on the context size
@@ -1594,7 +1655,7 @@ ggml_tensor * llama_context_base::build_rope_shift(
         ggml_tensor * cur,
         ggml_tensor * shift,
         ggml_tensor * factors,
-        ggml_backend_buffer * bbuf) {
+        ggml_backend_buffer * bbuf) const {
     const auto & n_ctx_orig = cparams.n_ctx_orig_yarn;
     const auto & freq_base  = cparams.rope_freq_base;
     const auto & freq_scale = cparams.rope_freq_scale;
@@ -1614,7 +1675,7 @@ ggml_tensor * llama_context_base::build_rope_shift(
         tmp = ggml_cast(ctx0, cur, GGML_TYPE_F32);
 
         if (bbuf) {
-            for (auto & backend : backends) {
+            for (const auto & backend : backends) {
                 // Figure out which backend KV cache belongs to
                 if (ggml_backend_supports_buft(backend.get(), ggml_backend_buffer_get_type(bbuf))) {
                     ggml_backend_sched_set_tensor_backend(sched.get(), tmp, backend.get());
@@ -1694,49 +1755,72 @@ ggml_tensor * llama_context_base::build_inp_embd(
 }
 
 ggml_tensor * llama_context_base::build_inp_pos(
-        ggml_context * ctx0,
-             int32_t   n_tokens) {
-    inp.pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens*n_pos_per_token());
-    ggml_set_input(inp.pos);
+        llama_graph_result * res,
+              ggml_context * ctx0,
+                   int32_t   n_tokens) const {
+    auto inp = std::make_shared<llama_graph_input_pos>(n_pos_per_token());
 
-    return inp.pos;
+    inp->pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens*n_pos_per_token());
+    ggml_set_input(inp->pos);
+
+    res->add_input(inp);
+
+    return inp->pos;
 }
 
 ggml_tensor * llama_context_base::build_inp_pos_bucket(
-        ggml_context * ctx0,
-             int32_t   n_tokens) {
-    inp.pos_bucket = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_tokens, n_tokens);
-    ggml_set_input(inp.pos_bucket);
+        llama_graph_result * res,
+              ggml_context * ctx0,
+                   int32_t   n_tokens) const {
+    auto inp = std::make_shared<llama_graph_input_pos_bucket>(model.hparams);
 
-    return inp.pos_bucket;
+    inp->pos_bucket = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_tokens, n_tokens);
+    ggml_set_input(inp->pos_bucket);
+
+    res->add_input(inp);
+
+    return inp->pos_bucket;
 }
 
 ggml_tensor * llama_context_base::build_inp_out_ids(
-        ggml_context * ctx0) {
-    const int32_t n_out_ids = n_outputs;
+        llama_graph_result * res,
+              ggml_context * ctx0) const {
+    auto inp = std::make_shared<llama_graph_input_out_ids>(model.hparams, cparams, n_outputs);
 
-    inp.out_ids = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_out_ids);
-    ggml_set_input(inp.out_ids);
+    inp->out_ids = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_outputs);
+    ggml_set_input(inp->out_ids);
 
-    return inp.out_ids;
+    res->add_input(inp);
+
+    return inp->out_ids;
 }
 
 ggml_tensor * llama_context_base::build_inp_mean(
-        ggml_context * ctx0,
-             int32_t   n_tokens) {
-    inp.mean = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_tokens, n_tokens);
-    ggml_set_input(inp.mean);
+        llama_graph_result * res,
+              ggml_context * ctx0,
+                   int32_t   n_tokens) const {
+    auto inp = std::make_shared<llama_graph_input_mean>(cparams);
 
-    return inp.mean;
+    inp->mean = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_tokens, n_tokens);
+    ggml_set_input(inp->mean);
+
+    res->add_input(inp);
+
+    return inp->mean;
 }
 
 ggml_tensor * llama_context_base::build_inp_cls(
-        ggml_context * ctx0,
-             int32_t   n_tokens) {
-    inp.cls = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
-    ggml_set_input(inp.cls);
+        llama_graph_result * res,
+              ggml_context * ctx0,
+                   int32_t   n_tokens) const {
+    auto inp = std::make_shared<llama_graph_input_cls>(cparams);
 
-    return inp.cls;
+    inp->cls = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
+    ggml_set_input(inp->cls);
+
+    res->add_input(inp);
+
+    return inp->cls;
 }
 
 llama_graph_input_attn_ptr llama_context_base::build_attn_inp(
@@ -1886,33 +1970,6 @@ ggml_tensor * llama_context_base::build_attn_mha(
 
     return cur;
 }
-
-ggml_tensor * llama_context_base::build_inp_self_k_shift(
-        ggml_context * ctx0) {
-    GGML_UNUSED(ctx0);
-
-    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
-    return nullptr;
-}
-
-void llama_context_base::build_kv_self_shift(
-        ggml_context * ctx0,
-        ggml_cgraph * gf) {
-    GGML_UNUSED(ctx0);
-    GGML_UNUSED(gf);
-
-    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
-}
-
-void llama_context_base::build_kv_self_defrag(
-        ggml_context * ctx0,
-        ggml_cgraph * gf) {
-    GGML_UNUSED(ctx0);
-    GGML_UNUSED(gf);
-
-    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
-}
-
 
 //
 // perf
@@ -2428,6 +2485,68 @@ size_t llama_context_base::state_seq_read_data(llama_io_read_i & io, llama_seq_i
 // llama_context_kv_self
 //
 
+class llama_graph_input_pos_bucket_kv : public llama_graph_input_i {
+public:
+    llama_graph_input_pos_bucket_kv(
+            const llama_hparams & hparams,
+            const llama_kv_cache_unified * kv_self) : hparams(hparams), kv_self(kv_self) {}
+    virtual ~llama_graph_input_pos_bucket_kv() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * pos_bucket; // I32 [n_batch, n_batch]
+
+    const llama_hparams & hparams;
+    const llama_kv_cache_unified * kv_self;
+};
+
+void llama_graph_input_pos_bucket_kv::set_input(const llama_ubatch * ubatch) {
+    if (pos_bucket) {
+        const int64_t n_tokens = ubatch->n_tokens;
+
+        GGML_ASSERT(ggml_backend_buffer_is_host(pos_bucket->buffer));
+        GGML_ASSERT(!ubatch->equal_seqs); // TODO: use ubatch->n_seqs instead of failing
+
+        int32_t * data = (int32_t *) pos_bucket->data;
+
+        const int64_t n_kv = kv_self->n;
+
+        for (int h = 0; h < 1; ++h) {
+            for (int j = 0; j < n_tokens; ++j) {
+                for (int i = 0; i < n_kv; ++i) {
+                    data[h*(n_kv*n_tokens) + j*n_kv + i] = llama_relative_position_bucket(kv_self->cells[i].pos, ubatch->pos[j], hparams.n_rel_attn_bkts, false);
+                }
+            }
+        }
+    }
+}
+
+class llama_graph_input_k_shift : public llama_graph_input_i {
+public:
+    llama_graph_input_k_shift(const llama_kv_cache_unified * kv_self) : kv_self(kv_self) {}
+    virtual ~llama_graph_input_k_shift() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * k_shift; // I32 [kv_size]
+
+    const llama_kv_cache_unified * kv_self;
+};
+
+void llama_graph_input_k_shift::set_input(const llama_ubatch * ubatch) {
+    GGML_UNUSED(ubatch);
+
+    if (k_shift) {
+        assert(ggml_backend_buffer_is_host(k_shift->buffer));
+
+        int32_t * data = (int32_t *) k_shift->data;
+
+        for (uint32_t i = 0; i < kv_self->size; ++i) {
+            data[i] = kv_self->cells[i].delta;
+        }
+    }
+}
+
 class llama_graph_input_attn_kv_self : public llama_graph_input_attn_i {
 public:
     llama_graph_input_attn_kv_self(
@@ -2661,11 +2780,11 @@ void llama_context_kv_self::kv_self_update() {
 
             auto * gf = graph_init();
 
-            build_kv_self_shift(ctx_compute.get(), gf);
+            auto res = graph_build_kv_self_shift(ctx_compute.get(), gf);
 
             ggml_backend_sched_alloc_graph(sched.get(), gf);
 
-            input_set({});
+            res->set_inputs(nullptr);
 
             graph_compute(gf, false);
 
@@ -2689,7 +2808,7 @@ void llama_context_kv_self::kv_self_update() {
 
         auto * gf = graph_init();
 
-        build_kv_self_defrag(ctx_compute.get(), gf);
+        graph_build_kv_self_defrag(ctx_compute.get(), gf);
 
         ggml_backend_sched_alloc_graph(sched.get(), gf);
 
@@ -2792,7 +2911,6 @@ int llama_context_kv_self::encode(llama_batch & inp_batch) {
     ggml_backend_sched_alloc_graph(sched.get(), gf);
 
     res->set_inputs(&ubatch);
-    input_set(ubatch); // TODO: remove
 
     const auto compute_status = graph_compute(gf, n_tokens > 1);
     switch (compute_status) {
@@ -3031,7 +3149,6 @@ int llama_context_kv_self::decode(llama_batch & inp_batch) {
         ggml_backend_sched_alloc_graph(sched.get(), gf);
 
         res->set_inputs(&ubatch);
-        input_set(ubatch); // TODO: remove
 
         const auto compute_status = graph_compute(gf, ubatch.n_tokens > 1);
         if (compute_status != GGML_STATUS_SUCCESS) {
@@ -3190,66 +3307,24 @@ int llama_context_kv_self::decode(llama_batch & inp_batch) {
     return 0;
 }
 
-void llama_context_kv_self::input_set(const llama_ubatch & ubatch) {
-    const llama_hparams & hparams = model.hparams;
-
-    if (inp.self_k_shift) {
-        assert(ggml_backend_buffer_is_host(inp.self_k_shift->buffer));
-
-        int32_t * data = (int32_t *) inp.self_k_shift->data;
-
-        for (uint32_t i = 0; i < kv_self->size; ++i) {
-            data[i] = kv_self->cells[i].delta;
-        }
-
-        // the K-shift graph requires just this input
-        return;
-    }
-
-    // call base functionality
-    llama_context_base::input_set(ubatch);
-
-    if (inp.self_pos_bucket) {
-        const int64_t n_tokens = ubatch.n_tokens;
-
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp.self_pos_bucket->buffer));
-        GGML_ASSERT(!ubatch.equal_seqs); // TODO: use ubatch.n_seqs instead of failing
-
-        int32_t * data = (int32_t *) inp.self_pos_bucket->data;
-
-        const int64_t n_kv = kv_self->n;
-        for (int h = 0; h < 1; ++h) {
-            for (int j = 0; j < n_tokens; ++j) {
-                for (int i = 0; i < n_kv; ++i) {
-                    data[h*(n_kv*n_tokens) + j*n_kv + i] = llama_relative_position_bucket(kv_self->cells[i].pos, ubatch.pos[j], hparams.n_rel_attn_bkts, false);
-                }
-            }
-        }
-    }
-}
-
 ggml_cgraph * llama_context_kv_self::graph_init() {
-    inp = {};
-
     return llama_context_base::graph_init();
 }
 
-ggml_tensor * llama_context_kv_self::build_inp_self_k_shift(ggml_context * ctx0) {
-    inp.self_k_shift = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_ctx());
-    ggml_set_input(inp.self_k_shift);
-
-    return inp.self_k_shift;
-}
-
 ggml_tensor * llama_context_kv_self::build_inp_pos_bucket(
-        ggml_context * ctx0,
-             int32_t   n_tokens) {
+        llama_graph_result * res,
+              ggml_context * ctx0,
+                   int32_t   n_tokens) const {
+    auto inp = std::make_shared<llama_graph_input_pos_bucket_kv>(model.hparams, kv_self.get());
+
     const auto n_kv = kv_self->n;
 
-    inp.self_pos_bucket = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_kv, n_tokens);
-    ggml_set_input(inp.self_pos_bucket);
+    inp->pos_bucket = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_kv, n_tokens);
+    ggml_set_input(inp->pos_bucket);
 
-    return inp.self_pos_bucket;
+    res->inputs.push_back(inp);
+
+    return inp->pos_bucket;
 }
 
 llama_graph_input_attn_ptr llama_context_kv_self::build_attn_inp(
@@ -3404,9 +3479,11 @@ ggml_tensor * llama_context_kv_self::build_attn(
     return cur;
 }
 
-void llama_context_kv_self::build_kv_self_shift(
+llama_graph_result_ptr llama_context_kv_self::graph_build_kv_self_shift(
         ggml_context * ctx0,
-        ggml_cgraph * gf) {
+        ggml_cgraph * gf) const {
+    auto res = std::make_unique<llama_graph_result>();
+
     const auto & hparams = model.hparams;
 
     const auto & n_layer = hparams.n_layer;
@@ -3416,7 +3493,12 @@ void llama_context_kv_self::build_kv_self_shift(
 
     //GGML_ASSERT(kv_self->size == n_ctx);
 
-    ggml_tensor * inp_self_k_shift = build_inp_self_k_shift(ctx0);
+    auto inp = std::make_shared<llama_graph_input_k_shift>(kv_self.get());
+
+    inp->k_shift = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_ctx());
+    ggml_set_input(inp->k_shift);
+
+    res->add_input(inp);
 
     for (uint32_t il = 0; il < n_layer; ++il) {
         const int64_t n_head_kv    = hparams.n_head_kv(il);
@@ -3431,15 +3513,17 @@ void llama_context_kv_self::build_kv_self_shift(
                 ggml_row_size(kv_self->k_l[il]->type, n_embd_k_gqa),
                 0);
 
-        ggml_tensor * cur = build_rope_shift(ctx0, k, inp_self_k_shift, rope_factors, kv_self->k_l[il]->buffer);
+        ggml_tensor * cur = build_rope_shift(ctx0, k, inp->k_shift, rope_factors, kv_self->k_l[il]->buffer);
 
         ggml_build_forward_expand(gf, cur);
     }
+
+    return res;
 }
 
-void llama_context_kv_self::build_kv_self_defrag(
+llama_graph_result_ptr llama_context_kv_self::graph_build_kv_self_defrag(
         ggml_context * ctx0,
-        ggml_cgraph * gf) {
+        ggml_cgraph * gf) const {
     const auto & hparams = model.hparams;
 
     const uint32_t n_layer = hparams.n_layer;
@@ -3454,7 +3538,7 @@ void llama_context_kv_self::build_kv_self_defrag(
     // number of cells moved
     uint32_t n_moves = 0;
 
-    // each move requires 6*n_layer tensors (see build_kv_self_defrag)
+    // each move requires 6*n_layer tensors (see graph_build_kv_self_defrag)
     //   - source view, destination view, copy operation
     //   - x2 for keys and values
     //const uint32_t max_moves = max_nodes()/(6*n_layer);
@@ -3565,7 +3649,7 @@ void llama_context_kv_self::build_kv_self_defrag(
     }
 
     if (n_moves == 0) {
-        return;
+        return nullptr;
     }
 
     //LLAMA_LOG_INFO("(tmp log) KV defrag cell moves: %u\n", n_moves);
@@ -3705,6 +3789,8 @@ void llama_context_kv_self::build_kv_self_defrag(
 
     //LLAMA_LOG_INFO("gf->n_nodes = %d\n", gf->n_nodes);
 #endif
+
+    return nullptr;
 }
 
 // state save/load
@@ -3746,6 +3832,89 @@ size_t llama_context_kv_self::state_seq_read_data(llama_io_read_i & io, llama_se
 //
 // llama_context_recurrent
 //
+
+class llama_graph_input_s_copy : public llama_graph_input_i {
+public:
+    llama_graph_input_s_copy(llama_kv_cache_recurrent * kv_self) : kv_self(kv_self) {}
+    virtual ~llama_graph_input_s_copy() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * s_copy; // I32 [kv_size]
+
+    llama_kv_cache_recurrent * kv_self;
+};
+
+void llama_graph_input_s_copy::set_input(const llama_ubatch * ubatch) {
+    GGML_UNUSED(ubatch);
+
+    const int64_t n_kv = kv_self->n;
+
+    if (s_copy) {
+        GGML_ASSERT(ggml_backend_buffer_is_host(s_copy->buffer));
+        int32_t * data = (int32_t *) s_copy->data;
+
+        // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+        for (uint32_t i = 0; i < n_kv; ++i) {
+            const uint32_t  cell_id = i + kv_self->head;
+            llama_kv_cell & kv_cell = kv_self->cells[cell_id];
+
+            //////////////////////////////////////////////
+            // TODO: this should not mutate the KV cache !
+
+            // prevent out-of-bound sources
+            if (kv_cell.src < 0 || (uint32_t) kv_cell.src >= kv_self->size) {
+                kv_cell.src = cell_id;
+            }
+
+            data[i] = kv_cell.src;
+
+            // TODO: do not mutate the KV cache
+            // ensure copy only happens once
+            if (kv_cell.src != (int32_t) cell_id) {
+                kv_cell.src = cell_id;
+            }
+        }
+    }
+}
+
+class llama_graph_input_s_mask : public llama_graph_input_i {
+public:
+    llama_graph_input_s_mask(llama_kv_cache_recurrent * kv_self) : kv_self(kv_self) {}
+    virtual ~llama_graph_input_s_mask() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * s_mask; // F32 [1, n_kv]
+
+    llama_kv_cache_recurrent * kv_self;
+};
+
+void llama_graph_input_s_mask::set_input(const llama_ubatch * ubatch) {
+    GGML_UNUSED(ubatch);
+
+    const int64_t n_kv = kv_self->n;
+
+    if (s_mask) {
+        GGML_ASSERT(ggml_backend_buffer_is_host(s_mask->buffer));
+        float * data = (float *) s_mask->data;
+
+        // clear unused states
+        for (int i = 0; i < n_kv; ++i) {
+            const uint32_t  cell_id = i + kv_self->head;
+            llama_kv_cell & kv_cell = kv_self->cells[cell_id];
+
+            data[i] = (float) (kv_cell.src >= 0);
+
+            //////////////////////////////////////////////
+            // TODO: this should not mutate the KV cache !
+            // only clear once
+            if (kv_cell.src < 0) {
+                kv_cell.src = cell_id;
+            }
+        }
+    }
+}
 
 llama_context_recurrent::llama_context_recurrent(
         const llama_model & model,
@@ -3985,7 +4154,6 @@ int llama_context_recurrent::decode(llama_batch & inp_batch) {
         ggml_backend_sched_alloc_graph(sched.get(), gf);
 
         res->set_inputs(&ubatch);
-        input_set(ubatch); // TODO: remove
 
         const auto compute_status = graph_compute(gf, ubatch.n_tokens > 1);
         if (compute_status != GGML_STATUS_SUCCESS) {
@@ -4130,85 +4298,40 @@ int llama_context_recurrent::decode(llama_batch & inp_batch) {
     return 0;
 }
 
-void llama_context_recurrent::input_set(const llama_ubatch & ubatch) {
-    // call base functionality
-    llama_context_base::input_set(ubatch);
-
-    GGML_ASSERT(kv_self->recurrent);
-
-    const int64_t n_kv = kv_self->n;
-
-    if (inp.s_mask) {
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp.s_mask->buffer));
-        float * data = (float *) inp.s_mask->data;
-
-        // clear unused states
-        for (int i = 0; i < n_kv; ++i) {
-            const uint32_t  cell_id = i + kv_self->head;
-            llama_kv_cell & kv_cell = kv_self->cells[cell_id];
-
-            data[i] = (float) (kv_cell.src >= 0);
-
-            // TODO: do not mutate the KV cache
-            // only clear once
-            if (kv_cell.src < 0) {
-                kv_cell.src = cell_id;
-            }
-        }
-    }
-
-    if (inp.s_copy) {
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp.s_copy->buffer));
-        int32_t * data = (int32_t *) inp.s_copy->data;
-
-        // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
-        for (uint32_t i = 0; i < n_kv; ++i) {
-            const uint32_t  cell_id = i + kv_self->head;
-            llama_kv_cell & kv_cell = kv_self->cells[cell_id];
-
-            // prevent out-of-bound sources
-            if (kv_cell.src < 0 || (uint32_t) kv_cell.src >= kv_self->size) {
-                kv_cell.src = cell_id;
-            }
-
-            data[i] = kv_cell.src;
-
-            // TODO: do not mutate the KV cache
-            // ensure copy only happens once
-            if (kv_cell.src != (int32_t) cell_id) {
-                kv_cell.src = cell_id;
-            }
-        }
-    }
-}
-
 ggml_cgraph * llama_context_recurrent::graph_init() {
-    inp.s_copy = nullptr;
-    inp.s_mask = nullptr;
-
     return llama_context_base::graph_init();
 }
 
 ggml_tensor * llama_context_recurrent::build_inp_s_copy(
-        ggml_context * ctx0) {
+      llama_graph_result * res,
+            ggml_context * ctx0) const {
+    auto inp = std::make_shared<llama_graph_input_s_copy>(kv_self.get());
+
     const auto n_kv = kv_self->n;
 
-    inp.s_copy = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_kv);
+    inp->s_copy = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_kv);
     //cb(inp.s_copy, "inp_s_copy", -1);
-    ggml_set_input(inp.s_copy);
+    ggml_set_input(inp->s_copy);
 
-    return inp.s_copy;
+    res->add_input(inp);
+
+    return inp->s_copy;
 }
 
 ggml_tensor * llama_context_recurrent::build_inp_s_mask(
-        ggml_context * ctx0) {
+      llama_graph_result * res,
+            ggml_context * ctx0) const {
+    auto inp = std::make_shared<llama_graph_input_s_mask>(kv_self.get());
+
     const auto n_kv = kv_self->n;
 
-    inp.s_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, 1, n_kv);
-    //cb(inp.s_mask, "inp_s_mask", -1);
-    ggml_set_input(inp.s_mask);
+    inp->s_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, 1, n_kv);
+    //cb(inp->s_mask, "inp_s_mask", -1);
+    ggml_set_input(inp->s_mask);
 
-    return inp.s_mask;
+    res->add_input(inp);
+
+    return inp->s_mask;
 }
 
 ggml_tensor * llama_context_recurrent::build_copy_mask_state(
@@ -4218,7 +4341,7 @@ ggml_tensor * llama_context_recurrent::build_copy_mask_state(
          ggml_tensor * state_copy,
          ggml_tensor * state_mask,
              int32_t   n_state,
-             int32_t   n_seqs) {
+             int32_t   n_seqs) const {
     const auto n_kv    = kv_self->n;
     const auto kv_head = kv_self->head;
 
@@ -4251,7 +4374,7 @@ ggml_tensor * llama_context_recurrent::build_mamba_layer(
          ggml_tensor * state_copy,
          ggml_tensor * state_mask,
   const llama_ubatch & ubatch,
-                 int   il) {
+                 int   il) const {
     const auto & hparams = model.hparams;
 
     const auto kv_head = kv_self->head;
@@ -4383,7 +4506,7 @@ ggml_tensor * llama_context_recurrent::build_rwkv_token_shift_load(
          ggml_tensor * state_copy,
          ggml_tensor * state_mask,
   const llama_ubatch & ubatch,
-                 int   il) {
+                 int   il) const {
     const auto & hparams = model.hparams;
 
     const auto token_shift_count = hparams.token_shift_count;
@@ -4405,7 +4528,7 @@ ggml_tensor * llama_context_recurrent::build_rwkv_token_shift_store(
         ggml_context * ctx0,
          ggml_tensor * token_shift,
   const llama_ubatch & ubatch,
-                 int   il) {
+                 int   il) const {
     const auto & hparams = model.hparams;
 
     const auto token_shift_count = hparams.token_shift_count;
@@ -4430,7 +4553,7 @@ ggml_tensor * llama_context_recurrent::build_rwkv6_time_mix(
          ggml_tensor * state_copy,
          ggml_tensor * state_mask,
   const llama_ubatch & ubatch,
-                 int   il) {
+                 int   il) const {
     const auto & hparams = model.hparams;
 
     const auto n_tokens = ubatch.n_tokens;
@@ -4693,7 +4816,6 @@ int llama_context_enc::encode(llama_batch & inp_batch) {
     ggml_backend_sched_alloc_graph(sched.get(), gf);
 
     res->set_inputs(&ubatch);
-    input_set(ubatch); // TODO: remove
 
     const auto compute_status = graph_compute(gf, n_tokens > 1);
     switch (compute_status) {
@@ -4782,6 +4904,29 @@ int llama_context_enc::encode(llama_batch & inp_batch) {
 // llama_context_dec
 //
 
+class llama_graph_input_cross_embd : public llama_graph_input_i {
+public:
+    llama_graph_input_cross_embd(
+            const llama_cross * cross) : cross(cross) {}
+    virtual ~llama_graph_input_cross_embd() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * cross_embd; // F32 [n_embd, n_outputs_enc]
+
+    const llama_cross * cross;
+};
+
+void llama_graph_input_cross_embd::set_input(const llama_ubatch * ubatch) {
+    GGML_UNUSED(ubatch);
+
+    if (cross_embd && cross->t_embd) {
+        assert(cross_embd->type == GGML_TYPE_F32);
+
+        ggml_backend_tensor_set(cross_embd, cross->v_embd, 0, ggml_nbytes(cross_embd));
+    }
+}
+
 class llama_graph_input_attn_dec : public llama_graph_input_attn_i {
 public:
     llama_graph_input_attn_dec(
@@ -4841,32 +4986,21 @@ void llama_context_dec::reserve() {
     llama_context_kv_self::reserve();
 }
 
-void llama_context_dec::input_set(const llama_ubatch & ubatch) {
-    // call base functionality
-    llama_context_kv_self::input_set(ubatch);
-
-    if (inp.cross_embd && cross->t_embd) {
-        assert(inp.cross_embd->type == GGML_TYPE_F32);
-
-        ggml_backend_tensor_set(inp.cross_embd, cross->v_embd, 0, ggml_nbytes(inp.cross_embd));
-    }
-
-}
-
 ggml_cgraph * llama_context_dec::graph_init() {
-    inp = {};
-
     return llama_context_kv_self::graph_init();
 }
 
 ggml_tensor * llama_context_dec::build_inp_cross_embd(
-        ggml_context * ctx0) {
+      llama_graph_result * res,
+            ggml_context * ctx0) const {
+    auto inp = std::make_shared<llama_graph_input_cross_embd>(cross);
+
     // if we have the output embeddings from the encoder, use them directly
     // TODO: needs more work to be correct, for now just use the tensor shape
     //if (cross->t_embd) {
-    //    inp.cross_embd = ggml_view_tensor(ctx0, cross->t_embd);
+    //    inp->cross_embd = ggml_view_tensor(ctx0, cross->t_embd);
 
-    //    return inp.cross_embd;
+    //    return inp->cross_embd;
     //}
 
     const auto & hparams = model.hparams;
@@ -4874,10 +5008,12 @@ ggml_tensor * llama_context_dec::build_inp_cross_embd(
     const auto n_embd = cross->t_embd ? cross->t_embd->ne[0] : hparams.n_embd;
     const auto n_enc  = cross->t_embd ? cross->t_embd->ne[1] : hparams.n_ctx_train;
 
-    inp.cross_embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, n_enc);
-    ggml_set_input(inp.cross_embd);
+    inp->cross_embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, n_enc);
+    ggml_set_input(inp->cross_embd);
 
-    return inp.cross_embd;
+    res->add_input(inp);
+
+    return inp->cross_embd;
 }
 
 llama_graph_input_attn_ptr llama_context_dec::build_attn_inp(
