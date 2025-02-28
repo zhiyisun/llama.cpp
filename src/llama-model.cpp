@@ -3813,6 +3813,212 @@ enum llm_norm_type {
     LLM_NORM_GROUP,
 };
 
+class llama_graph_input_pos : public llama_graph_input_i {
+public:
+    llama_graph_input_pos(int64_t n_pos_per_token) : n_pos_per_token(n_pos_per_token) {}
+    virtual ~llama_graph_input_pos() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * pos = nullptr; // I32 [n_batch]
+
+    const int64_t n_pos_per_token = 1;
+};
+
+void llama_graph_input_pos::set_input(const llama_ubatch * ubatch) {
+    if (ubatch->pos && pos) {
+        const int64_t n_tokens = ubatch->n_tokens;
+
+        ggml_backend_tensor_set(pos, ubatch->pos, 0, n_tokens*n_pos_per_token*ggml_element_size(pos));
+    }
+}
+
+class llama_graph_input_out_ids : public llama_graph_input_i {
+public:
+    llama_graph_input_out_ids(
+            const llama_hparams & hparams,
+            const llama_cparams & cparams,
+            int32_t n_outputs) : hparams(hparams), cparams(cparams), n_outputs(n_outputs) {}
+    virtual ~llama_graph_input_out_ids() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * out_ids; // I32 [n_outputs]
+
+    const llama_hparams & hparams;
+    const llama_cparams & cparams;
+
+    const int32_t n_outputs;
+};
+
+void llama_graph_input_out_ids::set_input(const llama_ubatch * ubatch) {
+    if (hparams.causal_attn || cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
+        //GGML_ASSERT(out_ids && "every model that can must skip unused outputs");
+
+        if (!out_ids) {
+            LLAMA_LOG_WARN("%s: 'out_ids' is not created\n", __func__);
+        } else {
+            const int64_t n_tokens = ubatch->n_tokens;
+
+            GGML_ASSERT(ggml_backend_buffer_is_host(out_ids->buffer));
+            int32_t * data = (int32_t *) out_ids->data;
+
+            if (n_outputs == n_tokens) {
+                for (int i = 0; i < n_tokens; ++i) {
+                    data[i] = i;
+                }
+            } else if (ubatch->output) {
+                int32_t n_outputs = 0;
+                for (int i = 0; i < n_tokens; ++i) {
+                    if (ubatch->output[i]) {
+                        data[n_outputs++] = i;
+                    }
+                }
+                // the graph needs to have been passed the correct number of outputs
+                GGML_ASSERT(n_outputs == n_outputs);
+            } else if (n_outputs == 1) {
+                // only keep last output
+                data[0] = n_tokens - 1;
+            } else {
+                GGML_ASSERT(n_outputs == 0);
+            }
+        }
+    }
+}
+
+class llama_graph_input_mean : public llama_graph_input_i {
+public:
+    llama_graph_input_mean(const llama_cparams & cparams) : cparams(cparams) {}
+    virtual ~llama_graph_input_mean() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * mean; // F32 [n_batch, n_batch]
+
+    const llama_cparams & cparams;
+};
+
+void llama_graph_input_mean::set_input(const llama_ubatch * ubatch) {
+    if (cparams.embeddings && cparams.pooling_type == LLAMA_POOLING_TYPE_MEAN) {
+        const int64_t n_tokens     = ubatch->n_tokens;
+        const int64_t n_seq_tokens = ubatch->n_seq_tokens;
+        const int64_t n_seqs       = ubatch->n_seqs;
+
+        GGML_ASSERT(mean);
+        GGML_ASSERT(ggml_backend_buffer_is_host(mean->buffer));
+
+        float * data = (float *) mean->data;
+        memset(mean->data, 0, n_tokens * n_tokens * ggml_element_size(mean));
+
+        std::vector<uint64_t> sum(n_tokens, 0);
+
+        for (int s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = ubatch->seq_id[s][0];
+
+            // TODO: adapt limits to n_seqs when ubatch->equal_seqs is true
+            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == MEAN");
+
+            sum[seq_id] += ubatch->n_seq_tokens;
+        }
+
+        std::vector<float> div(n_tokens, 0.0f);
+        for (int i = 0; i < n_tokens; ++i) {
+            const uint64_t s = sum[i];
+            if (s > 0) {
+                div[i] = 1.0f/float(s);
+            }
+        }
+
+        for (int s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = ubatch->seq_id[s][0];
+
+            for (int i = 0; i < n_seq_tokens; ++i) {
+                data[seq_id*n_tokens + s*n_seq_tokens + i] = div[seq_id];
+            }
+        }
+    }
+}
+
+class llama_graph_input_cls : public llama_graph_input_i {
+public:
+    llama_graph_input_cls(const llama_cparams & cparams) : cparams(cparams) {}
+    virtual ~llama_graph_input_cls() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * cls; // I32 [n_batch]
+
+    const llama_cparams & cparams;
+};
+
+void llama_graph_input_cls::set_input(const llama_ubatch * ubatch) {
+    if (cparams.embeddings && (
+                cparams.pooling_type == LLAMA_POOLING_TYPE_CLS ||
+                cparams.pooling_type == LLAMA_POOLING_TYPE_RANK)) {
+        const int64_t n_tokens     = ubatch->n_tokens;
+        const int64_t n_seq_tokens = ubatch->n_seq_tokens;
+        const int64_t n_seqs       = ubatch->n_seqs;
+
+        GGML_ASSERT(cls);
+        GGML_ASSERT(ggml_backend_buffer_is_host(cls->buffer));
+
+        uint32_t * data = (uint32_t *) cls->data;
+        memset(cls->data, 0, n_tokens * ggml_element_size(cls));
+
+        for (int s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = ubatch->seq_id[s][0];
+
+            // TODO: adapt limits to n_seqs when ubatch->equal_seqs is true
+            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == CLS or RANK");
+
+            for (int i = 0; i < n_seq_tokens; ++i) {
+                const llama_pos pos = ubatch->pos[s*n_seq_tokens + i];
+
+                if (pos == 0) {
+                    data[seq_id] = s*n_seq_tokens + i;
+                }
+            }
+        }
+    }
+
+    if (cparams.embeddings && cparams.pooling_type == LLAMA_POOLING_TYPE_LAST) {
+        const int64_t n_tokens     = ubatch->n_tokens;
+        const int64_t n_seq_tokens = ubatch->n_seq_tokens;
+        const int64_t n_seqs       = ubatch->n_seqs;
+
+        GGML_ASSERT(cls);
+        GGML_ASSERT(ggml_backend_buffer_is_host(cls->buffer));
+
+        uint32_t * data = (uint32_t *) cls->data;
+        memset(cls->data, 0, n_tokens * ggml_element_size(cls));
+
+        std::vector<int> last_pos(n_tokens, -1);
+        std::vector<int> last_row(n_tokens, -1);
+
+        for (int s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = ubatch->seq_id[s][0];
+
+            // TODO: adapt limits to n_seqs when ubatch->equal_seqs is true
+            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == LAST");
+
+            for (int i = 0; i < n_seq_tokens; ++i) {
+                const llama_pos pos = ubatch->pos[s*n_seq_tokens + i];
+
+                if (pos >= last_pos[seq_id]) {
+                    last_pos[seq_id] = pos;
+                    last_row[seq_id] = s*n_seq_tokens + i;
+                }
+            }
+        }
+
+        for (int i = 0; i < n_tokens; ++i) {
+            if (last_row[i] >= 0) {
+                data[i] = last_row[i];
+            }
+        }
+    }
+}
+
 struct llm_build_context {
     const llama_model   & model;
     const llama_hparams & hparams;
@@ -3895,55 +4101,75 @@ struct llm_build_context {
         res              (std::make_unique<llama_graph_result>()) {
         }
 
+    int64_t n_pos_per_token() const {
+        return model.arch == LLM_ARCH_QWEN2VL ? 4 : 1;
+    }
+
     // TODO: tmp
     void cb(struct ggml_tensor * cur, const char * name, int il) {
         lgf->build_cb(cur, name, ubatch, il);
     }
 
-    // TODO: tmp
     struct ggml_tensor * build_inp_embd(struct ggml_tensor * tok_embd) {
-        struct ggml_tensor * inpL = lgf->build_inp_embd(res.get(), ctx0, tok_embd, ubatch);
-        cb(inpL, "inp_embd", -1);
+        auto inp = lgf->build_inp_embd(ctx0, tok_embd, ubatch);
 
-        return inpL;
+        cb(inp->cur, "inp_embd", -1);
+
+        res->add_input(inp);
+
+        return inp->cur;
     }
 
-    // TODO: tmp
-    struct ggml_tensor * build_inp_pos() {
-        ggml_tensor * cur = lgf->build_inp_pos(res.get(), ctx0, n_tokens);
-        cb(cur, "inp_pos", -1);
+    struct ggml_tensor * build_inp_pos() const {
+        auto inp = std::make_shared<llama_graph_input_pos>(n_pos_per_token());
 
-        return cur;
+        inp->pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens*n_pos_per_token());
+        ggml_set_input(inp->pos);
+
+        res->add_input(inp);
+
+        return inp->pos;
     }
 
-    // TODO: tmp
     struct ggml_tensor * build_inp_out_ids() {
-        ggml_tensor * cur = lgf->build_inp_out_ids(res.get(), ctx0);
-        cb(cur, "inp_out_ids", -1);
+        const auto n_outputs = lgf->get_n_outputs();
 
-        return cur;
+        auto inp = std::make_shared<llama_graph_input_out_ids>(hparams, cparams, n_outputs);
+
+        inp->out_ids = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_outputs);
+        ggml_set_input(inp->out_ids);
+
+        res->add_input(inp);
+
+        return inp->out_ids;
     }
 
-    // TODO: tmp
     struct ggml_tensor * build_inp_mean() {
-        ggml_tensor * cur = lgf->build_inp_mean(res.get(), ctx0, n_tokens);
-        cb(cur, "inp_mean", -1);
+        auto inp = std::make_shared<llama_graph_input_mean>(cparams);
 
-        return cur;
+        inp->mean = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_tokens, n_tokens);
+        ggml_set_input(inp->mean);
+
+        res->add_input(inp);
+
+        return inp->mean;
     }
 
-    // TODO: tmp
     struct ggml_tensor * build_inp_cls() {
-        ggml_tensor * cur = lgf->build_inp_cls(res.get(), ctx0, n_tokens);
-        cb(cur, "inp_cls", -1);
+        auto inp = std::make_shared<llama_graph_input_cls>(cparams);
 
-        return cur;
+        inp->cls = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
+        ggml_set_input(inp->cls);
+
+        res->add_input(inp);
+
+        return inp->cls;
     }
 
     // TODO: tmp
     struct ggml_tensor * build_lora_mm(
               struct ggml_tensor * w,
-              struct ggml_tensor * cur) {
+              struct ggml_tensor * cur) const {
         return lgf->build_lora_mm(ctx0, w, cur);
     }
 
@@ -3951,24 +4177,42 @@ struct llm_build_context {
     struct ggml_tensor * build_lora_mm_id(
               struct ggml_tensor * w,   // struct ggml_tensor * as
               struct ggml_tensor * cur, // struct ggml_tensor * b
-              struct ggml_tensor * ids) {
+              struct ggml_tensor * ids) const {
         return lgf->build_lora_mm_id(ctx0, w, cur, ids);
     }
 
-    // TODO: tmp
     struct ggml_tensor * build_pos_bucket() {
-        ggml_tensor * cur = lgf->build_inp_pos_bucket(res.get(), ctx0, n_tokens);
-        cb(cur, "pos_bucket", -1);
+        auto inp = lgf->build_inp_pos_bucket(ctx0, n_tokens);
+        cb(inp->cur, "pos_bucket", -1);
 
-        return cur;
+        res->add_input(inp);
+
+        return inp->cur;
     }
 
-    // TODO: tmp
     struct ggml_tensor * build_inp_cross_embd() {
-        ggml_tensor * cur = lgf->build_inp_cross_embd(res.get(), ctx0);
-        cb(cur, "embd_enc", -1);
+        auto inp = lgf->build_inp_cross_embd(ctx0);
+        cb(inp->cur, "embd_enc", -1);
 
-        return cur;
+        res->add_input(inp);
+
+        return inp->cur;
+    }
+
+    struct ggml_tensor * build_inp_s_copy() const {
+        auto inp = lgf->build_inp_s_copy(ctx0);
+
+        res->add_input(inp);
+
+        return inp->cur;
+    }
+
+    struct ggml_tensor * build_inp_s_mask() const {
+        auto inp = lgf->build_inp_s_mask(ctx0);
+
+        res->add_input(inp);
+
+        return inp->cur;
     }
 
     struct ggml_tensor * build_norm(
@@ -4250,6 +4494,18 @@ struct llm_build_context {
         return moe_out;
     }
 
+    llama_graph_input_attn_ptr build_attn_inp(
+            ggml_context * ctx0,
+                 int32_t   n_tokens,
+                    bool   causal,
+                    bool   swa) const {
+        auto inp = lgf->build_attn_inp(ctx0, n_tokens, causal, swa);
+
+        res->add_input(inp);
+
+        return inp;
+    }
+
     struct ggml_tensor * build_attn(
             llama_graph_input_attn_i * inp,
             ggml_cgraph * gf,
@@ -4490,7 +4746,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
         for (int il = 0; il < n_layer; ++il) {
@@ -4651,7 +4907,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
         for (int il = 0; il < n_layer; ++il) {
@@ -4807,7 +5063,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = model.type == LLM_TYPE_7B ? build_inp_pos() : nullptr;
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -4923,7 +5179,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5028,7 +5284,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * attn_norm;
@@ -5151,7 +5407,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5303,7 +5559,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5425,7 +5681,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         struct ggml_tensor * pos = ggml_get_rows(ctx0, model.pos_embd, inp_pos);
         cb(pos, "pos_embd", -1);
@@ -5526,7 +5782,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5640,7 +5896,7 @@ struct llm_build_context {
         inpL = build_norm(inpL, model.tok_norm, model.tok_norm_b, LLM_NORM, -1);
         cb(inpL, "inp_norm", -1);
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, false, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, false, false);
 
         // iterate layers
         for (int il = 0; il < n_layer; ++il) {
@@ -5785,7 +6041,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         inpL = build_norm(inpL,
                 model.tok_norm,
@@ -5888,7 +6144,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         if (model.pos_embd) {
             // inp_pos - contains the positions
@@ -6030,11 +6286,9 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
-
-
             // norm
             cur = build_norm(inpL,
                     model.layers[il].attn_norm,
@@ -6181,7 +6435,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -6295,7 +6549,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -6408,7 +6662,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         int sections[4];
         std::copy(std::begin(hparams.rope_sections), std::begin(hparams.rope_sections) + 4, sections);
@@ -6526,7 +6780,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -6673,7 +6927,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             attn_norm_output = build_norm(inpL,
@@ -6795,8 +7049,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, true);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, true);
 
         for (int il = 0; il < n_layer; ++il) {
             auto * residual = inpL;
@@ -6940,7 +7193,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
 
@@ -7046,7 +7299,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         pos = ggml_get_rows(ctx0, model.pos_embd, inp_pos);
         cb(pos, "pos_embd", -1);
@@ -7152,7 +7405,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             cur = build_norm(inpL,
@@ -7263,7 +7516,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7382,7 +7635,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7510,7 +7763,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7711,7 +7964,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             // norm
@@ -7819,7 +8072,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, true);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, true);
 
         for (int il = 0; il < n_layer; ++il) {
             // norm
@@ -7949,7 +8202,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8062,8 +8315,8 @@ struct llm_build_context {
         // {n_embd, n_tokens}
         inpL = build_inp_embd(model.tok_embd);
 
-        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(res.get(), ctx0);
-        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(res.get(), ctx0);
+        struct ggml_tensor * state_copy = build_inp_s_copy();
+        struct ggml_tensor * state_mask = build_inp_s_mask();
 
         for (int il = 0; il < n_layer; ++il) {
             // norm
@@ -8124,7 +8377,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
 
@@ -8272,7 +8525,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, true);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, true);
 
         // sliding window switch pattern
         const int32_t sliding_window_pattern = 4;
@@ -8407,7 +8660,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8527,7 +8780,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8651,7 +8904,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8772,7 +9025,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             const int64_t n_head    = hparams.n_head(il);
@@ -8900,7 +9153,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             cur = build_norm(inpL,
@@ -9044,7 +9297,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9174,7 +9427,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
 
@@ -9337,7 +9590,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9555,7 +9808,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9706,7 +9959,7 @@ struct llm_build_context {
 
         struct ggml_tensor * pos_bucket_enc = build_pos_bucket();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, false, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, false, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9809,7 +10062,7 @@ struct llm_build_context {
 
         const int64_t n_outputs_enc = embd_enc->ne[1];
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9972,7 +10225,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             cur = build_norm(inpL,
@@ -10066,7 +10319,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10196,7 +10449,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10317,7 +10570,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10435,8 +10688,8 @@ struct llm_build_context {
         inpL = build_inp_embd(model.tok_embd);
         inpL = build_norm(inpL, model.tok_norm, model.tok_norm_b, LLM_NORM, -1);
 
-        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(res.get(), ctx0);
-        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(res.get(), ctx0);
+        struct ggml_tensor * state_copy = build_inp_s_copy();
+        struct ggml_tensor * state_mask = build_inp_s_mask();
 
         const auto n_embd = hparams.n_embd;
         const auto n_seq_tokens = ubatch.n_seq_tokens;
@@ -10527,8 +10780,8 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        struct ggml_tensor * state_copy = lgf->build_inp_s_copy(res.get(), ctx0);
-        struct ggml_tensor * state_mask = lgf->build_inp_s_mask(res.get(), ctx0);
+        struct ggml_tensor * state_copy = build_inp_s_copy();
+        struct ggml_tensor * state_mask = build_inp_s_mask();
 
         const auto n_embd = hparams.n_embd;
         const auto n_seq_tokens = ubatch.n_seq_tokens;
@@ -10622,7 +10875,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
+        auto inp_attn = build_attn_inp(ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;

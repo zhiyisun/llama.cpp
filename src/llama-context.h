@@ -243,12 +243,6 @@ public:
 
 protected:
     //
-    // input
-    //
-
-    virtual int64_t n_pos_per_token() const; // vision
-
-    //
     // output
     //
 
@@ -287,6 +281,8 @@ public:
     // graph build
     //
 
+    int32_t get_n_outputs() const override;
+
     void build_cb(
              ggml_tensor * cur,
               const char * name,
@@ -314,45 +310,16 @@ public:
 
     ggml_tensor * build_rope_factors(int il) const override;
 
-    ggml_tensor * build_rope_shift(
-            ggml_context * ctx0,
-             ggml_tensor * cur,
-             ggml_tensor * shift,
-             ggml_tensor * factors,
-             ggml_backend_buffer * bbuf) const override;
-
-    ggml_tensor * build_inp_embd(
-            llama_graph_result * res,
+    llama_graph_input_ptr build_inp_embd(
                   ggml_context * ctx0,
                    ggml_tensor * tok_embd,
             const llama_ubatch & ubatch) const override;
 
-    ggml_tensor * build_inp_pos(
-      llama_graph_result * res,
-            ggml_context * ctx0,
-                 int32_t   n_tokens) const override;
-
-    ggml_tensor * build_inp_pos_bucket(
-      llama_graph_result * res,
-            ggml_context * ctx0,
-                 int32_t   n_tokens) const override;
-
-    ggml_tensor * build_inp_out_ids(
-      llama_graph_result * res,
-            ggml_context * ctx0) const override;
-
-    ggml_tensor * build_inp_mean(
-      llama_graph_result * res,
-            ggml_context * ctx0,
-                 int32_t   n_tokens) const override;
-
-    ggml_tensor * build_inp_cls(
-      llama_graph_result * res,
+    llama_graph_input_ptr build_inp_pos_bucket(
             ggml_context * ctx0,
                  int32_t   n_tokens) const override;
 
     llama_graph_input_attn_ptr build_attn_inp(
-      llama_graph_result * res,
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
@@ -370,7 +337,15 @@ public:
                      int   il) const override;
 
 protected:
-    virtual ggml_tensor * build_attn_mha(
+    // note: optionally set the backend to be the same as the bbuf's backend
+    ggml_tensor * build_rope_shift(
+            ggml_context * ctx0,
+             ggml_tensor * cur,
+             ggml_tensor * shift,
+             ggml_tensor * factors,
+             ggml_backend_buffer * bbuf) const;
+
+    ggml_tensor * build_attn_mha(
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * q,
@@ -458,28 +433,9 @@ protected:
     llama_loras        loras;
     llama_sbatch       sbatch;
 
-    ggml_threadpool_t threadpool       = nullptr;
-    ggml_threadpool_t threadpool_batch = nullptr;
-
-    ggml_abort_callback abort_callback      = nullptr;
-    void *              abort_callback_data = nullptr;
-
-    ggml_backend_t backend_cpu = nullptr;
-    std::vector<ggml_backend_ptr> backends;
-
-    std::vector<std::pair<ggml_backend_t, ggml_backend_set_n_threads_t>> set_n_threads_fns;
-
     ggml_backend_sched_ptr sched;
 
-    // buffer types used for the compute buffer of each backend
-    std::vector<ggml_backend_t>             backend_ptrs;
-    std::vector<ggml_backend_buffer_type_t> backend_buft;
-
-    // memory buffers used to evaluate the model
-    std::vector<uint8_t> buf_compute_meta;
-
-    // host buffer for the model output (logits and embeddings)
-    ggml_backend_buffer_ptr buf_output;
+    // TODO: these below likely need some rework in the future, together with the batch-refactoring
 
     // TODO: remove
     bool logits_all = false;
@@ -501,6 +457,30 @@ protected:
     int32_t n_outputs_max = 0; // capacity (of tokens positions) for the output buffers
 
     std::vector<int32_t> output_ids; // map batch token positions to ids of the logits and embd buffers
+
+private:
+    // base functionality - should not leak into derived classes
+
+    ggml_threadpool_t threadpool       = nullptr;
+    ggml_threadpool_t threadpool_batch = nullptr;
+
+    ggml_abort_callback abort_callback      = nullptr;
+    void *              abort_callback_data = nullptr;
+
+    ggml_backend_t backend_cpu = nullptr;
+    std::vector<ggml_backend_ptr> backends;
+
+    std::vector<std::pair<ggml_backend_t, ggml_backend_set_n_threads_t>> set_n_threads_fns;
+
+    // buffer types used for the compute buffer of each backend
+    std::vector<ggml_backend_t>             backend_ptrs;
+    std::vector<ggml_backend_buffer_type_t> backend_buft;
+
+    // memory buffers used to evaluate the model
+    std::vector<uint8_t> buf_compute_meta;
+
+    // host buffer for the model output (logits and embeddings)
+    ggml_backend_buffer_ptr buf_output;
 
     bool has_evaluated_once = false;
 };
@@ -539,13 +519,11 @@ public:
     // graph build
     //
 
-    ggml_tensor * build_inp_pos_bucket(
-      llama_graph_result * res,
+    llama_graph_input_ptr build_inp_pos_bucket(
             ggml_context * ctx0,
                  int32_t   n_tokens) const override;
 
     llama_graph_input_attn_ptr build_attn_inp(
-      llama_graph_result * res,
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
@@ -624,12 +602,10 @@ public:
     // graph build
     //
 
-    ggml_tensor * build_inp_s_copy(
-      llama_graph_result * res,
+    llama_graph_input_ptr build_inp_s_copy(
             ggml_context * ctx0) const override;
 
-    ggml_tensor * build_inp_s_mask(
-      llama_graph_result * res,
+    llama_graph_input_ptr build_inp_s_mask(
             ggml_context * ctx0) const override;
 
     ggml_tensor * build_copy_mask_state(
@@ -694,6 +670,10 @@ private:
     std::unique_ptr<llama_kv_cache_recurrent> kv_self;
 };
 
+//
+// enc-dec
+//
+
 // TODO: tmp - need something better to pass the data from the encoder to the decoder
 struct llama_cross {
     // the output embeddings from the encoder as a ggml tensor
@@ -714,7 +694,7 @@ public:
 
     int encode(llama_batch & inp_batch) override;
 
-    llama_cross * cross = nullptr;
+    llama_cross * cross = nullptr; // TODO: hacky, rework
 };
 
 class llama_context_dec : public llama_context_kv_self {
@@ -730,12 +710,10 @@ protected:
 
     ggml_cgraph * graph_init() override;
 
-    ggml_tensor * build_inp_cross_embd(
-      llama_graph_result * res,
+    llama_graph_input_ptr build_inp_cross_embd(
             ggml_context * ctx0) const override;
 
     llama_graph_input_attn_ptr build_attn_inp(
-      llama_graph_result * res,
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
@@ -753,7 +731,7 @@ protected:
                  int       il) const override;
 
 public:
-    llama_cross * cross = nullptr;
+    llama_cross * cross = nullptr; // TODO: hacky, rework
 };
 
 class llama_context_enc_dec : public llama_context {

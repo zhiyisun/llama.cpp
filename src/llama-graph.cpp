@@ -67,20 +67,16 @@ ggml_tensor * llama_graph_i::build_attn_cross(
     return nullptr;
 }
 
-ggml_tensor * llama_graph_i::build_inp_cross_embd(
-      llama_graph_result * res,
+llama_graph_input_ptr llama_graph_i::build_inp_cross_embd(
             ggml_context * ctx0) const {
-    GGML_UNUSED(res);
     GGML_UNUSED(ctx0);
 
     LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
     return nullptr;
 }
 
-ggml_tensor * llama_graph_i::build_inp_s_copy (
-      llama_graph_result * res,
+llama_graph_input_ptr llama_graph_i::build_inp_s_copy (
             ggml_context * ctx0) const {
-    GGML_UNUSED(res);
     GGML_UNUSED(ctx0);
 
     LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
@@ -88,10 +84,8 @@ ggml_tensor * llama_graph_i::build_inp_s_copy (
     return nullptr; // NOLINT
 }
 
-ggml_tensor * llama_graph_i::build_inp_s_mask(
-      llama_graph_result * res,
+llama_graph_input_ptr llama_graph_i::build_inp_s_mask(
             ggml_context * ctx0) const {
-    GGML_UNUSED(res);
     GGML_UNUSED(ctx0);
 
     LLAMA_LOG_ERROR("%s: not implemented\n", __func__);

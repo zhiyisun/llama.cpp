@@ -365,7 +365,6 @@ struct llama_model {
 
     const struct ggml_tensor * get_tensor(const char * name) const;
 
-    // TODO: add encode/decode graphs
     llama_graph_result_ptr build_graph(
               ggml_context * ctx,
                ggml_cgraph * gf,

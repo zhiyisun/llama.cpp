@@ -29,6 +29,9 @@ public:
     virtual ~llama_graph_input_i() = default;
 
     virtual void set_input(const llama_ubatch * ubatch) = 0;
+
+    // by default, we produce a single input tensor, but some children could produce more
+    ggml_tensor * cur = nullptr;
 };
 
 using llama_graph_input_ptr = std::shared_ptr<llama_graph_input_i>;
@@ -76,7 +79,7 @@ public:
         }
     }
 
-    void add_input(llama_graph_input_ptr && input) {
+    void add_input(llama_graph_input_ptr input) {
         inputs.emplace_back(std::move(input));
     }
 
@@ -92,19 +95,23 @@ public:
 // llama_graph
 //
 
+// note: keep all methods const
 // TODO: can become more granular in the future
-// TODO: move all methods that do not require things from llama_context to llm_build_context
 class llama_graph_i {
 public:
     llama_graph_i(llama_graph_type type);
     virtual ~llama_graph_i() = default;
 
-    llama_graph_type get_type() const { return type; }
+    llama_graph_type get_type() const {
+        return type;
+    }
 
-protected:
+private:
     llama_graph_type type;
 
 public:
+    virtual int32_t get_n_outputs() const = 0;
+
     // callback that allows us to apply custom logic to each tensor (e.g. ggml-alloc, offloading, etc.)
     virtual void build_cb(
              ggml_tensor * cur,
@@ -131,50 +138,27 @@ public:
              ggml_tensor * cur, // struct ggml_tensor * b
              ggml_tensor * ids) const = 0;
 
+    // rope factors based on the current context size
     virtual ggml_tensor * build_rope_factors(int il) const = 0;
-
-    // note: optionally set the backend to be the same as the bbuf's backend
-    virtual ggml_tensor * build_rope_shift(
-            ggml_context * ctx0,
-             ggml_tensor * cur,
-             ggml_tensor * shift,
-             ggml_tensor * factors,
-             ggml_backend_buffer * bbuf) const = 0;
 
     // graph build API (context-specific)
 
-    virtual ggml_tensor * build_inp_embd(
-      llama_graph_result * res,
+    // input embeddings with optional lora
+    virtual llama_graph_input_ptr build_inp_embd(
             ggml_context * ctx0,
              ggml_tensor * tok_embd,
       const llama_ubatch & ubatch) const = 0;
 
-    virtual ggml_tensor * build_inp_pos(
-      llama_graph_result * res,
+    // enc-dec pos
+    virtual llama_graph_input_ptr build_inp_pos_bucket(
             ggml_context * ctx0,
                  int32_t   n_tokens) const = 0;
 
-    virtual ggml_tensor * build_inp_pos_bucket(
-      llama_graph_result * res,
-            ggml_context * ctx0,
-                 int32_t   n_tokens) const = 0;
-
-    virtual ggml_tensor * build_inp_out_ids(
-      llama_graph_result * res,
-            ggml_context * ctx0) const = 0;
-
-    virtual ggml_tensor * build_inp_mean(
-      llama_graph_result * res,
-            ggml_context * ctx0,
-                 int32_t   n_tokens) const = 0;
-
-    virtual ggml_tensor * build_inp_cls(
-      llama_graph_result * res,
-            ggml_context * ctx0,
-                 int32_t   n_tokens) const = 0;
+    //
+    // attention API
+    //
 
     virtual llama_graph_input_attn_ptr build_attn_inp(
-      llama_graph_result * res,
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
@@ -202,16 +186,17 @@ public:
                  float     kq_scale,
                  int       il) const;
 
-    virtual ggml_tensor * build_inp_cross_embd(
-      llama_graph_result * res,
+    virtual llama_graph_input_ptr build_inp_cross_embd(
             ggml_context * ctx0) const;
 
-    virtual ggml_tensor * build_inp_s_copy(
-      llama_graph_result * res,
+    //
+    // recurrent API
+    //
+
+    virtual llama_graph_input_ptr build_inp_s_copy(
             ggml_context * ctx0) const;
 
-    virtual ggml_tensor * build_inp_s_mask(
-      llama_graph_result * res,
+    virtual llama_graph_input_ptr build_inp_s_mask(
             ggml_context * ctx0) const;
 
     virtual ggml_tensor * build_copy_mask_state(
