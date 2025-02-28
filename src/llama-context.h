@@ -21,10 +21,10 @@ class llama_io_write_i;
 using llama_loras = std::unordered_map<struct llama_adapter_lora *, float>;
 
 // abstract interface corresponding to the public C API
-struct llama_context {
+class llama_context_i {
 public:
-    llama_context() = default;
-    virtual ~llama_context() = default;
+    llama_context_i() = default;
+    virtual ~llama_context_i() = default;
 
     virtual void init() = 0;
 
@@ -157,14 +157,13 @@ public:
                 size_t   n_token_count) = 0;
 };
 
-// C++ alias
-class llama_context_i : public llama_context {
-public:
-    using llama_context::llama_context;
+// C alias
+struct llama_context : public llama_context_i {
+    using llama_context_i::llama_context_i;
 };
 
 // basic transformer without KV cache
-class llama_context_base : public llama_context_i, public llama_graph_i {
+class llama_context_base : public llama_context, public llama_graph_i {
 public:
     llama_context_base(
             const llama_model & model,
@@ -821,7 +820,7 @@ public:
     llama_cross * cross = nullptr;
 };
 
-class llama_context_enc_dec : public llama_context_i {
+class llama_context_enc_dec : public llama_context {
 public:
     llama_context_enc_dec(
             const llama_model & model,

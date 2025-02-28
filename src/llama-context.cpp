@@ -49,7 +49,7 @@ llama_context_base::llama_context_base(
         const llama_model & model,
               llama_context_params params,
               llama_graph_type gtype) :
-    llama_context_i(),
+    llama_context(),
     llama_graph_i(gtype),
     model(model) {
     LLAMA_LOG_INFO("%s: constructing llama_context_base, gtype = %d\n", __func__, gtype);
