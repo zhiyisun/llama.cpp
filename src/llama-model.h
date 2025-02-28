@@ -3,6 +3,7 @@
 #include "llama.h"
 #include "llama-arch.h"
 #include "llama-hparams.h"
+#include "llama-graph.h"
 #include "llama-vocab.h"
 
 #include <memory>
@@ -10,11 +11,9 @@
 #include <unordered_map>
 #include <vector>
 
-class  llama_graph_i;
 struct llama_cparams;
 struct llama_ubatch;
 struct llama_model_loader;
-struct llama_graph_result;
 
 // available models
 enum llm_type {
@@ -367,7 +366,7 @@ struct llama_model {
     const struct ggml_tensor * get_tensor(const char * name) const;
 
     // TODO: add encode/decode graphs
-    llama_graph_result build_graph(
+    llama_graph_result_ptr build_graph(
               ggml_context * ctx,
                ggml_cgraph * gf,
              llama_graph_i * lgf,

@@ -251,22 +251,18 @@ protected:
     // when the compute graph is built, it creates the input tensors that it needs
     // the contents of the input tensors are set by the input_set() function
 
+    // TODO: remove, replace by llama_graph_input_i->set_input()
     virtual void input_set(const llama_ubatch & ubatch);
 
 private:
+    // TODO: remove, implement as llama_graph_input_xxx
     struct {
         // base input tensors
-        ggml_tensor * tokens;     // I32 [n_batch]
-        ggml_tensor * embd;       // F32 [n_embd, n_batch]
         ggml_tensor * pos;        // I32 [n_batch]
         ggml_tensor * pos_bucket; // I32 [n_batch, n_batch]
         ggml_tensor * out_ids;    // I32 [n_outputs]
         ggml_tensor * mean;       // F32 [n_batch, n_batch]
         ggml_tensor * cls;        // I32 [n_batch]
-
-        // KQ mask input tensors
-        ggml_tensor * kq_mask;     // F32 [n_tokens, n_batch]
-        ggml_tensor * kq_mask_cnv; //     [n_tokens, n_batch]
     } inp;
 
 protected:
@@ -292,7 +288,7 @@ protected:
     virtual ggml_cgraph * graph_init();
 
     // TODO: add encode/decode graphs
-    virtual llama_graph_result graph_build(
+    virtual llama_graph_result_ptr graph_build(
             ggml_context * ctx,
              ggml_cgraph * gf,
       const llama_ubatch & ubatch);
@@ -344,9 +340,10 @@ public:
              ggml_backend_buffer * bbuf) override;
 
     ggml_tensor * build_inp_embd(
-            ggml_context * ctx0,
-             ggml_tensor * tok_embd,
-      const llama_ubatch & ubatch) override;
+            llama_graph_result * res,
+                  ggml_context * ctx0,
+                   ggml_tensor * tok_embd,
+            const llama_ubatch & ubatch) const override;
 
     ggml_tensor * build_inp_pos(
             ggml_context * ctx0,
@@ -367,21 +364,23 @@ public:
             ggml_context * ctx0,
                  int32_t   n_tokens) override;
 
-    void build_attn_inp(
+    llama_graph_input_attn_ptr build_attn_inp(
+      llama_graph_result * res,
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
-                    bool   swa) override;
+                    bool   swa) const override;
 
     ggml_tensor * build_attn(
+            llama_graph_input_attn_i * inp,
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * q_cur,
              ggml_tensor * k_cur,
              ggml_tensor * v_cur,
              ggml_tensor * kq_b,
-                 float     kq_scale,
-                 int       il) override;
+                   float   kq_scale,
+                     int   il) const override;
 
 protected:
     virtual ggml_tensor * build_attn_mha(
@@ -393,7 +392,7 @@ protected:
              ggml_tensor * kq_b,
              ggml_tensor * kq_mask,
                  bool      v_trans,
-                 float     kq_scale);
+                 float     kq_scale) const;
 
     virtual ggml_tensor * build_inp_self_k_shift(
             ggml_context * ctx0);
@@ -563,10 +562,6 @@ protected:
 private:
     struct {
         ggml_tensor * self_pos_bucket;      // I32 [n_kv, n_batch]
-        ggml_tensor * self_kq_mask;         // F32 [n_kv, n_batch]
-        ggml_tensor * self_kq_mask_cnv;     //     [n_kv, n_batch]
-        ggml_tensor * self_kq_mask_swa;     // F32 [n_kv, n_batch]
-        ggml_tensor * self_kq_mask_swa_cnv; //     [n_kv, n_batch]
         ggml_tensor * self_k_shift;         // I32 [kv_size]
     } inp;
 
@@ -586,21 +581,23 @@ public:
             ggml_context * ctx0,
                  int32_t   n_tokens) override;
 
-    void build_attn_inp(
+    llama_graph_input_attn_ptr build_attn_inp(
+      llama_graph_result * res,
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
-                    bool   swa) override;
+                    bool   swa) const override;
 
     ggml_tensor * build_attn(
+            llama_graph_input_attn_i * inp,
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * q_cur,
              ggml_tensor * k_cur,
              ggml_tensor * v_cur,
              ggml_tensor * kq_b,
-                 float     kq_scale,
-                 int       il) override;
+                   float   kq_scale,
+                     int   il) const override;
 
 protected:
     ggml_tensor * build_inp_self_k_shift(ggml_context * ctx0) override;
@@ -786,8 +783,6 @@ protected:
 private:
     struct {
         ggml_tensor * cross_embd;        // F32 [n_embd, n_outputs_enc]
-        ggml_tensor * cross_kq_mask;     // F32 [n_outputs_enc, n_batch]
-        ggml_tensor * cross_kq_mask_cnv; // F32 [n_outputs_enc, n_batch]
     } inp;
 
 protected:
@@ -800,13 +795,15 @@ protected:
     ggml_tensor * build_inp_cross_embd(
             ggml_context * ctx0) override;
 
-    void build_attn_inp(
+    llama_graph_input_attn_ptr build_attn_inp(
+      llama_graph_result * res,
             ggml_context * ctx0,
                  int32_t   n_tokens,
                     bool   causal,
-                    bool   swa) override;
+                    bool   swa) const override;
 
     ggml_tensor * build_attn_cross(
+            llama_graph_input_attn_i * inp,
             ggml_context * ctx0,
              ggml_cgraph * gf,
              ggml_tensor * q_cur,
@@ -814,7 +811,7 @@ protected:
              ggml_tensor * v_cur,
              ggml_tensor * kq_b,
                  float     kq_scale,
-                 int       il) override;
+                 int       il) const override;
 
 public:
     llama_cross * cross = nullptr;

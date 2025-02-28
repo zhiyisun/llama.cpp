@@ -2,7 +2,6 @@
 
 #include "llama-impl.h"
 #include "llama-mmap.h"
-#include "llama-graph.h"
 #include "llama-batch.h"
 #include "llama-cparams.h"
 #include "llama-model-loader.h"
@@ -3853,7 +3852,7 @@ struct llm_build_context {
     ggml_context * ctx0 = nullptr;
     llama_graph_i * lgf = nullptr;
 
-    llama_graph_result res;
+    std::unique_ptr<llama_graph_result> res;
 
     // TODO: consider making the entire interface noexcept
     llm_build_context(
@@ -3892,7 +3891,8 @@ struct llm_build_context {
         pooling_type     (cparams.pooling_type),
         rope_type        (hparams.rope_type),
         ctx0             (ctx),
-        lgf              (lgf) {
+        lgf              (lgf),
+        res              (std::make_unique<llama_graph_result>()) {
         }
 
     // TODO: tmp
@@ -3902,7 +3902,7 @@ struct llm_build_context {
 
     // TODO: tmp
     struct ggml_tensor * build_inp_embd(struct ggml_tensor * tok_embd) {
-        struct ggml_tensor * inpL = lgf->build_inp_embd(ctx0, tok_embd, ubatch);
+        struct ggml_tensor * inpL = lgf->build_inp_embd(res.get(), ctx0, tok_embd, ubatch);
         cb(inpL, "inp_embd", -1);
 
         return inpL;
@@ -4259,15 +4259,16 @@ struct llm_build_context {
     }
 
     struct ggml_tensor * build_attn(
-             struct ggml_cgraph * gf,
-             struct ggml_tensor * wo,
-             struct ggml_tensor * wo_b,
-             struct ggml_tensor * q_cur,
-             struct ggml_tensor * k_cur,
-             struct ggml_tensor * v_cur,
-                        int32_t   n_tokens, // TODO: remove
-                        float     kq_scale,
-                        int       il) {
+            llama_graph_input_attn_i * inp,
+            ggml_cgraph * gf,
+            ggml_tensor * wo,
+            ggml_tensor * wo_b,
+            ggml_tensor * q_cur,
+            ggml_tensor * k_cur,
+            ggml_tensor * v_cur,
+                int32_t   n_tokens, // TODO: remove
+                float     kq_scale,
+                int       il) {
         GGML_UNUSED(n_tokens);
 
         // these nodes are added to the graph together so that they are not reordered
@@ -4276,7 +4277,7 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, k_cur);
         ggml_build_forward_expand(gf, v_cur);
 
-        ggml_tensor * cur = lgf->build_attn(ctx0, gf, q_cur, k_cur, v_cur, nullptr, kq_scale, il);
+        ggml_tensor * cur = lgf->build_attn(inp, ctx0, gf, q_cur, k_cur, v_cur, nullptr, kq_scale, il);
         cb(cur, "kqv_out", il);
 
         if (wo) {
@@ -4295,15 +4296,16 @@ struct llm_build_context {
     }
 
     struct ggml_tensor * build_attn_cross(
-             struct ggml_cgraph * gf,
-             struct ggml_tensor * wo,
-             struct ggml_tensor * wo_b,
-             struct ggml_tensor * q_cur,
-             struct ggml_tensor * k_cur,
-             struct ggml_tensor * v_cur,
-                        int32_t   n_tokens, // TODO: remove
-                        float     kq_scale,
-                        int       il) {
+            llama_graph_input_attn_i * inp,
+            ggml_cgraph * gf,
+            ggml_tensor * wo,
+            ggml_tensor * wo_b,
+            ggml_tensor * q_cur,
+            ggml_tensor * k_cur,
+            ggml_tensor * v_cur,
+                int32_t   n_tokens, // TODO: remove
+                float     kq_scale,
+                int       il) {
         GGML_UNUSED(n_tokens);
 
         // these nodes are added to the graph together so that they are not reordered
@@ -4312,7 +4314,7 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, k_cur);
         ggml_build_forward_expand(gf, v_cur);
 
-        ggml_tensor * cur = lgf->build_attn_cross(ctx0, gf, q_cur, k_cur, v_cur, nullptr, kq_scale, il);
+        ggml_tensor * cur = lgf->build_attn_cross(inp, ctx0, gf, q_cur, k_cur, v_cur, nullptr, kq_scale, il);
         cb(cur, "kqv_out", il);
 
         if (wo) {
@@ -4331,16 +4333,17 @@ struct llm_build_context {
     }
 
     struct ggml_tensor * build_attn_with_kq_b(
-             struct ggml_cgraph * gf,
-             struct ggml_tensor * wo,
-             struct ggml_tensor * wo_b,
-             struct ggml_tensor * q_cur,
-             struct ggml_tensor * k_cur,
-             struct ggml_tensor * v_cur,
-             struct ggml_tensor * kq_b,
-                        int32_t   n_tokens, // TODO: remove
-                        float     kq_scale,
-                        int       il) {
+            llama_graph_input_attn_i * inp,
+            ggml_cgraph * gf,
+            ggml_tensor * wo,
+            ggml_tensor * wo_b,
+            ggml_tensor * q_cur,
+            ggml_tensor * k_cur,
+            ggml_tensor * v_cur,
+            ggml_tensor * kq_b,
+                int32_t   n_tokens, // TODO: remove
+                float     kq_scale,
+                int       il) {
         GGML_UNUSED(n_tokens);
 
         // these nodes are added to the graph together so that they are not reordered
@@ -4349,7 +4352,7 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, k_cur);
         ggml_build_forward_expand(gf, v_cur);
 
-        ggml_tensor * cur = lgf->build_attn(ctx0, gf, q_cur, k_cur, v_cur, kq_b, kq_scale, il);
+        ggml_tensor * cur = lgf->build_attn(inp, ctx0, gf, q_cur, k_cur, v_cur, kq_b, kq_scale, il);
         cb(cur, "kqv_out", il);
 
         if (wo) {
@@ -4397,7 +4400,7 @@ struct llm_build_context {
     }
 
     void append_pooling(struct ggml_cgraph * gf) {
-        struct ggml_tensor * inp = res.t_embd;
+        struct ggml_tensor * inp = res->t_embd;
 
         //// find result_norm tensor for input
         //for (int i = ggml_graph_n_nodes(gf) - 1; i >= 0; --i) {
@@ -4457,7 +4460,7 @@ struct llm_build_context {
         }
 
         cb(cur, "result_embd_pooled", -1);
-        res.t_embd_pooled = cur;
+        res->t_embd_pooled = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -4495,7 +4498,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
         for (int il = 0; il < n_layer; ++il) {
@@ -4548,7 +4551,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, kq_scale, il);
             }
@@ -4626,7 +4629,7 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
@@ -4637,7 +4640,7 @@ struct llm_build_context {
         }
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -4656,7 +4659,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
         for (int il = 0; il < n_layer; ++il) {
@@ -4720,7 +4723,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, kq_scale, il);
             }
@@ -4782,7 +4785,7 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
@@ -4793,7 +4796,7 @@ struct llm_build_context {
         }
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -4812,7 +4815,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = model.type == LLM_TYPE_7B ? build_inp_pos() : nullptr;
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -4856,7 +4859,7 @@ struct llm_build_context {
                 cb(Qcur, "Qcur", il);
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -4903,13 +4906,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -4928,7 +4931,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -4962,7 +4965,7 @@ struct llm_build_context {
                     ext_factor, attn_factor, beta_fast, beta_slow
                 );
                 cb(Kcur, "Kcur", il);
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -5007,13 +5010,13 @@ struct llm_build_context {
         cur = build_norm(cur, model.output_norm, NULL, LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -5033,7 +5036,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * attn_norm;
@@ -5084,7 +5087,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -5129,12 +5132,12 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -5156,7 +5159,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5206,7 +5209,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f, il);
             }
@@ -5277,7 +5280,7 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
@@ -5288,7 +5291,7 @@ struct llm_build_context {
         cur = ggml_scale(ctx0, cur, 0.5773502691896257f);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -5308,7 +5311,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5353,7 +5356,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -5405,13 +5408,13 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -5430,7 +5433,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         struct ggml_tensor * pos = ggml_get_rows(ctx0, model.pos_embd, inp_pos);
         cb(pos, "pos_embd", -1);
@@ -5463,7 +5466,7 @@ struct llm_build_context {
 
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -5511,12 +5514,12 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -5531,7 +5534,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -5558,7 +5561,7 @@ struct llm_build_context {
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
                 cb(Qcur, "Qcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -5605,13 +5608,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -5645,7 +5648,7 @@ struct llm_build_context {
         inpL = build_norm(inpL, model.tok_norm, model.tok_norm_b, LLM_NORM, -1);
         cb(inpL, "inp_norm", -1);
 
-        lgf->build_attn_inp(ctx0, n_tokens, false, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, false, false);
 
         // iterate layers
         for (int il = 0; il < n_layer; ++il) {
@@ -5710,7 +5713,7 @@ struct llm_build_context {
             cb(Kcur, "Kcur", il);
             cb(Vcur, "Vcur", il);
 
-            cur = build_attn(gf,
+            cur = build_attn(inp_attn.get(), gf,
                     model.layers[il].wo, model.layers[il].bo,
                     Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             cb(cur, "kqv_out", il);
@@ -5774,7 +5777,7 @@ struct llm_build_context {
         cur = inpL;
 
         cb(cur, "result_embd", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -5790,7 +5793,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         inpL = build_norm(inpL,
                 model.tok_norm,
@@ -5823,7 +5826,7 @@ struct llm_build_context {
 
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -5871,12 +5874,12 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -5893,7 +5896,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         if (model.pos_embd) {
             // inp_pos - contains the positions
@@ -5956,13 +5959,13 @@ struct llm_build_context {
                     Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
                     Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
 
-                    cur = build_attn(gf,
+                    cur = build_attn(inp_attn.get(), gf,
                             model.layers[il].wo, model.layers[il].bo,
                             Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
                 } else {
                     Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
 
-                    cur = build_attn(gf,
+                    cur = build_attn(inp_attn.get(), gf,
                             model.layers[il].wo, model.layers[il].bo,
                             Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
                 }
@@ -6012,12 +6015,12 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -6035,7 +6038,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
 
@@ -6108,7 +6111,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -6162,13 +6165,13 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -6186,7 +6189,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -6228,7 +6231,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -6275,13 +6278,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -6300,7 +6303,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -6343,7 +6346,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -6388,13 +6391,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -6413,7 +6416,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         int sections[4];
         std::copy(std::begin(hparams.rope_sections), std::begin(hparams.rope_sections) + 4, sections);
@@ -6461,7 +6464,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -6506,13 +6509,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -6531,7 +6534,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -6574,7 +6577,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -6651,13 +6654,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -6678,7 +6681,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             attn_norm_output = build_norm(inpL,
@@ -6733,7 +6736,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f, il);
             }
@@ -6773,7 +6776,7 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
         cb(cur, "result_output_no_bias", -1);
@@ -6781,7 +6784,7 @@ struct llm_build_context {
         cur = ggml_add(ctx0, cur, model.output_b);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -6801,7 +6804,7 @@ struct llm_build_context {
         struct ggml_tensor * inp_pos = build_inp_pos();
 
         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
-        lgf->build_attn_inp(ctx0, n_tokens, true, true);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, true);
 
         for (int il = 0; il < n_layer; ++il) {
             auto * residual = inpL;
@@ -6856,7 +6859,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f, il);
             }
@@ -6916,7 +6919,7 @@ struct llm_build_context {
             LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
@@ -6926,7 +6929,7 @@ struct llm_build_context {
         }
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -6945,7 +6948,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
 
@@ -6981,7 +6984,7 @@ struct llm_build_context {
                         ext_factor, attn_factor, beta_fast, beta_slow);
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -7025,13 +7028,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -7051,7 +7054,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         pos = ggml_get_rows(ctx0, model.pos_embd, inp_pos);
         cb(pos, "pos_embd", -1);
@@ -7084,7 +7087,7 @@ struct llm_build_context {
 
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -7132,12 +7135,12 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -7157,7 +7160,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             cur = build_norm(inpL,
@@ -7196,7 +7199,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -7244,12 +7247,12 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -7268,7 +7271,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7317,7 +7320,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -7362,13 +7365,13 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -7387,7 +7390,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7436,7 +7439,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -7481,13 +7484,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -7515,7 +7518,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -7630,7 +7633,7 @@ struct llm_build_context {
                 struct ggml_tensor * k_states = ggml_concat(ctx0, k_nope, ggml_repeat(ctx0, k_pe, q_pe), 0);
                 cb(k_states, "k_states", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         q_states, k_states, v_states, n_tokens, kq_scale, il);
             }
@@ -7686,7 +7689,7 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head scaling
         const float scale_lmhead = float(n_embd_base)/float(n_embd);
@@ -7697,7 +7700,7 @@ struct llm_build_context {
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -7716,7 +7719,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             // norm
@@ -7752,7 +7755,7 @@ struct llm_build_context {
                         ext_factor, attn_factor, beta_fast, beta_slow);
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f, il);
             }
@@ -7799,13 +7802,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -7824,7 +7827,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, true);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, true);
 
         for (int il = 0; il < n_layer; ++il) {
             // norm
@@ -7866,7 +7869,7 @@ struct llm_build_context {
                         ext_factor, attn_factor, beta_fast, beta_slow);
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f, il);
             }
@@ -7923,7 +7926,7 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
@@ -7934,7 +7937,7 @@ struct llm_build_context {
         cur = ggml_scale(ctx0, cur, hparams.f_final_logit_softcapping);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -7954,7 +7957,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8003,7 +8006,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -8049,13 +8052,13 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -8103,13 +8106,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -8129,7 +8132,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
 
@@ -8203,7 +8206,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -8247,7 +8250,7 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
@@ -8257,7 +8260,7 @@ struct llm_build_context {
         }
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -8277,7 +8280,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, true);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, true);
 
         // sliding window switch pattern
         const int32_t sliding_window_pattern = 4;
@@ -8338,7 +8341,7 @@ struct llm_build_context {
                     cb(Kcur, "Kcur", il);
                 }
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -8377,7 +8380,7 @@ struct llm_build_context {
         cur = build_norm(cur, model.output_norm, NULL, LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
@@ -8387,7 +8390,7 @@ struct llm_build_context {
         }
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -8412,7 +8415,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8461,7 +8464,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, nullptr,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -8507,13 +8510,13 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -8532,7 +8535,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8576,7 +8579,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur_rope", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -8627,13 +8630,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -8656,7 +8659,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -8704,7 +8707,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur_rope", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -8754,13 +8757,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -8777,7 +8780,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             const int64_t n_head    = hparams.n_head(il);
@@ -8834,7 +8837,7 @@ struct llm_build_context {
                 Vcur = ggml_reshape_2d(ctx0, Vcur, n_embd_head * n_head_kv, n_tokens);
                 cb(Qcur, "Vcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -8881,12 +8884,12 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -8905,7 +8908,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             cur = build_norm(inpL,
@@ -8944,7 +8947,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -9025,12 +9028,12 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -9049,7 +9052,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9086,7 +9089,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -9154,13 +9157,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -9179,7 +9182,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
 
@@ -9233,7 +9236,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, kq_scale, il);
             }
@@ -9309,13 +9312,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -9342,7 +9345,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9461,7 +9464,7 @@ struct llm_build_context {
                 struct ggml_tensor * k_states = ggml_concat(ctx0, k_nope, ggml_repeat(ctx0, k_pe, q_pe), 0);
                 cb(k_states, "k_states", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         q_states, k_states, v_states, n_tokens, kq_scale, il);
             }
@@ -9536,13 +9539,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = ggml_mul_mat(ctx0, model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -9560,7 +9563,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9619,7 +9622,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         NULL, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
 
@@ -9687,14 +9690,14 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         // FIXME: do not use model.tok_embd directly, duplicate as model.output
         cur = build_lora_mm(model.tok_embd, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -9711,7 +9714,7 @@ struct llm_build_context {
 
         struct ggml_tensor * pos_bucket_enc = build_pos_bucket();
 
-        lgf->build_attn_inp(ctx0, n_tokens, false, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, false, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9740,7 +9743,7 @@ struct llm_build_context {
                 struct ggml_tensor * attn_rel_b = model.layers[il].attn_rel_b_enc ? model.layers[il].attn_rel_b_enc : model.layers[0].attn_rel_b_enc;
                 struct ggml_tensor * kq_b = build_pos_bias(pos_bucket_enc, attn_rel_b);
 
-                cur = build_attn_with_kq_b(gf,
+                cur = build_attn_with_kq_b(inp_attn.get(), gf,
                         model.layers[il].wo_enc, nullptr,
                         Qcur, Kcur, Vcur, kq_b, n_tokens, 1.0f, il);
                 cb(cur, "kqv_out", il);
@@ -9793,7 +9796,7 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -9814,7 +9817,7 @@ struct llm_build_context {
 
         const int64_t n_outputs_enc = embd_enc->ne[1];
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -9843,7 +9846,7 @@ struct llm_build_context {
                 struct ggml_tensor * attn_rel_b = model.layers[il].attn_rel_b ? model.layers[il].attn_rel_b : model.layers[0].attn_rel_b;
                 struct ggml_tensor * kq_b = build_pos_bias(pos_bucket_dec, attn_rel_b);
 
-                cur = build_attn_with_kq_b(gf,
+                cur = build_attn_with_kq_b(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, kq_b, n_tokens, 1.0f, il);
                 cb(cur, "kqv_out", il);
@@ -9875,7 +9878,7 @@ struct llm_build_context {
                 Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_outputs_enc);
                 Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_outputs_enc);
 
-                cur = build_attn_cross(gf,
+                cur = build_attn_cross(inp_attn.get(), gf,
                         model.layers[il].wo_cross, nullptr,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f, il);
                 cb(cur, "kqv_out", il);
@@ -9955,13 +9958,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -9977,7 +9980,7 @@ struct llm_build_context {
 
         inpL = build_inp_embd(model.tok_embd);
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             cur = build_norm(inpL,
@@ -10004,7 +10007,7 @@ struct llm_build_context {
 
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/float(n_embd_head), il);
             }
@@ -10047,12 +10050,12 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -10071,7 +10074,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10132,7 +10135,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur_rope", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
 
@@ -10177,12 +10180,12 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -10201,7 +10204,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10251,7 +10254,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -10297,13 +10300,13 @@ struct llm_build_context {
                 LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -10322,7 +10325,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10374,7 +10377,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
             }
@@ -10420,13 +10423,13 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -10513,12 +10516,12 @@ struct llm_build_context {
         cur = build_norm(cur, model.output_norm, model.output_norm_b, LLM_NORM, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -10597,12 +10600,12 @@ struct llm_build_context {
         cur = build_norm(cur, model.output_norm, model.output_norm_b, LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         cur = build_lora_mm(model.output, cur);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -10627,7 +10630,7 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
 
-        lgf->build_attn_inp(ctx0, n_tokens, true, false);
+        auto inp_attn = lgf->build_attn_inp(res.get(), ctx0, n_tokens, true, false);
 
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -10696,7 +10699,7 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = build_attn(gf,
+                cur = build_attn(inp_attn.get(), gf,
                         model.layers[il].wo, nullptr,
                         Qcur, Kcur, Vcur, n_tokens, 1.0f/sqrtf(float(n_embd_head)), il);
 
@@ -10757,7 +10760,7 @@ struct llm_build_context {
                 LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
@@ -10777,7 +10780,7 @@ struct llm_build_context {
         cur = ggml_set_1d(ctx0, cur, img_logits, ggml_element_size(cur) * img_token_start_idx);
 
         cb(cur, "result_output", -1);
-        res.t_logits = cur;
+        res->t_logits = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -10927,13 +10930,13 @@ struct llm_build_context {
         cur = ggml_add(ctx0, cur, model.output_b);
 
         cb(cur, "result_embd", -1);
-        res.t_embd = cur;
+        res->t_embd = cur;
 
         ggml_build_forward_expand(gf, cur);
     }
 };
 
-llama_graph_result llama_model::build_graph(
+llama_graph_result_ptr llama_model::build_graph(
           ggml_context * ctx,
            ggml_cgraph * gf,
          llama_graph_i * lgf,
@@ -11166,7 +11169,7 @@ llama_graph_result llama_model::build_graph(
         llm.append_pooling(gf);
     }
 
-    return llm.res;
+    return std::move(llm.res);
 }
 
 //

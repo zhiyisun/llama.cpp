@@ -2,17 +2,34 @@
 
 #include "llama-impl.h"
 
+ggml_tensor * llama_graph_input_attn_i::get_kq_mask() {
+    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
+    return nullptr;
+}
+
+ggml_tensor * llama_graph_input_attn_i::get_kq_mask_swa() {
+    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
+    return nullptr;
+}
+
+ggml_tensor * llama_graph_input_attn_i::get_kq_mask_cross() {
+    LLAMA_LOG_ERROR("%s: not implemented\n", __func__);
+    return nullptr;
+}
+
 llama_graph_i::llama_graph_i(llama_graph_type type) : type(type) {}
 
 ggml_tensor * llama_graph_i::build_attn(
+        llama_graph_input_attn_i * inp,
         ggml_context * ctx0,
          ggml_cgraph * gf,
          ggml_tensor * q_cur,
          ggml_tensor * k_cur,
          ggml_tensor * v_cur,
          ggml_tensor * kq_b,
-             float     kq_scale,
-             int       il) {
+               float   kq_scale,
+                 int   il) const {
+    GGML_UNUSED(inp);
     GGML_UNUSED(ctx0);
     GGML_UNUSED(gf);
     GGML_UNUSED(q_cur);
@@ -27,6 +44,7 @@ ggml_tensor * llama_graph_i::build_attn(
 }
 
 ggml_tensor * llama_graph_i::build_attn_cross(
+        llama_graph_input_attn_i * inp,
         ggml_context * ctx0,
          ggml_cgraph * gf,
          ggml_tensor * q_cur,
@@ -34,7 +52,8 @@ ggml_tensor * llama_graph_i::build_attn_cross(
          ggml_tensor * v_cur,
          ggml_tensor * kq_b,
              float     kq_scale,
-             int       il) {
+             int       il) const {
+    GGML_UNUSED(inp);
     GGML_UNUSED(ctx0);
     GGML_UNUSED(gf);
     GGML_UNUSED(q_cur);
