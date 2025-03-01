@@ -263,14 +263,6 @@ extern "C" {
     // It can contain text tokens and embeddings for one or many sequences
     struct llama_batch_ext;
 
-    struct llama_batch_ext_token_info {
-        llama_token    token;
-        llama_pos      pos;
-        int32_t        n_seq_id;
-        llama_seq_id * seq_id;
-        int8_t         logits;
-    };
-
     enum llama_model_kv_override_type {
         LLAMA_KV_OVERRIDE_TYPE_INT,
         LLAMA_KV_OVERRIDE_TYPE_FLOAT,
@@ -895,10 +887,6 @@ extern "C" {
 
     // Get the number of tokens in the batch
     LLAMA_API int32_t llama_batch_ext_get_n_tokens(const struct llama_batch_ext * batch);
-
-    LLAMA_API struct llama_batch_ext_token_info llama_batch_ext_get_token_info(
-        struct llama_batch_ext * batch,
-                       int32_t   i);
 
     // Add text tokens to the batch
     // Return values:

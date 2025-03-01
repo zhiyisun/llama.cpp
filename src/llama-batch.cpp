@@ -480,19 +480,6 @@ struct llama_batch_ext * llama_batch_ext_get_view(
     return batch_view;
 }
 
-struct llama_batch_ext_token_info llama_batch_ext_get_token_info(
-    struct llama_batch_ext * batch,
-                   int32_t   i) {
-    GGML_ASSERT(i >= 0 && i < batch->n_tokens);
-    return llama_batch_ext_token_info{
-        /*token    =*/ batch->token   [i],
-        /*pos      =*/ batch->pos     [i],
-        /*n_seq_id =*/ batch->n_seq_id[i],
-        /*seq_id   =*/ batch->seq_id  [i],
-        /*logits   =*/ batch->logits  [i],
-    };
-}
-
 void llama_batch_ext_free(struct llama_batch_ext * batch) {
     // do not free the members if it's a view
     if (!batch->is_view) {
