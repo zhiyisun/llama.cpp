@@ -209,7 +209,7 @@ llama_tokens common_speculative_gen_draft(
 
     for (size_t i = i_start + reuse_n; i < prompt_tgt.size(); ++i) {
         //LOG_DBG("i = %d, i_start = %d, reuse_n = %d, i - i_start = %d, id = %6d\n", i, i_start, reuse_n, i - i_start, prompt_tgt[i]);
-        llama_batch_ext_add_text_token(batch.get(), prompt_tgt[i], i - i_start, &seq_id, 1, false);
+        llama_batch_ext_add_text(batch.get(), prompt_tgt[i], i - i_start, &seq_id, 1, false);
 
         prompt.push_back(prompt_tgt[i]);
     }
@@ -226,7 +226,7 @@ llama_tokens common_speculative_gen_draft(
     LOG_DBG("%s: n_past = %d\n", __func__, n_past);
 
     llama_batch_ext_clear(batch.get());
-    llama_batch_ext_add_text_token(batch.get(), id_last, n_past, &seq_id, 1, true);
+    llama_batch_ext_add_text(batch.get(), id_last, n_past, &seq_id, 1, true);
 
     prompt.push_back(id_last);
 
@@ -265,7 +265,7 @@ llama_tokens common_speculative_gen_draft(
             break;
         }
 
-        llama_batch_ext_add_text_token(batch.get(), id, n_past + i + 1, &seq_id, 1, true);
+        llama_batch_ext_add_text(batch.get(), id, n_past + i + 1, &seq_id, 1, true);
 
         // evaluate the drafted tokens on the draft model
         llama_decode_ext(ctx, batch.get());

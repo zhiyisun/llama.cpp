@@ -344,7 +344,7 @@ struct llama_batch_ext * llama_batch_ext_init_from_text(
                 int32_t   seq_id) {
     llama_batch_ext * batch = llama_batch_ext_init(n_tokens, 1);
     for (int32_t i = 0; i < n_tokens; i++) {
-        llama_batch_ext_add_text_token(batch, tokens[i], pos0 + i, &seq_id, 1, false);
+        llama_batch_ext_add_text(batch, tokens[i], pos0 + i, &seq_id, 1, false);
     }
     return batch;
 }
@@ -404,7 +404,7 @@ int32_t llama_batch_ext_get_n_tokens(const struct llama_batch_ext * batch) {
     return batch->n_tokens;
 }
 
-int32_t llama_batch_ext_add_text_token(
+int32_t llama_batch_ext_add_text(
     struct llama_batch_ext * batch,
                llama_token   token,
                  llama_pos   pos,

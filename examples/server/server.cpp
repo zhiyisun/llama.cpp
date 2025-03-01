@@ -2849,7 +2849,7 @@ struct server_context {
             slot.i_batch = llama_batch_ext_get_n_tokens(batch.get());
 
             std::array<llama_token, 1> seq_id = { slot.id };
-            llama_batch_ext_add_text_token(batch.get(), slot.sampled, slot.n_past, seq_id.data(), seq_id.size(), true);
+            llama_batch_ext_add_text(batch.get(), slot.sampled, slot.n_past, seq_id.data(), seq_id.size(), true);
 
             slot.n_past += 1;
 
@@ -3057,7 +3057,7 @@ struct server_context {
                         const bool need_embd = slot.task_type == SERVER_TASK_TYPE_EMBEDDING && llama_pooling_type(slot.ctx) == LLAMA_POOLING_TYPE_NONE;
 
                         std::array<llama_token, 1> seq_id = { slot.id };
-                        llama_batch_ext_add_text_token(batch.get(), prompt_tokens[slot.n_past], slot.n_past, seq_id.data(), seq_id.size(), need_embd);
+                        llama_batch_ext_add_text(batch.get(), prompt_tokens[slot.n_past], slot.n_past, seq_id.data(), seq_id.size(), need_embd);
 
                         if (slot.params.cache_prompt) {
                             slot.cache_tokens.push_back(prompt_tokens[slot.n_past]);
@@ -3255,10 +3255,10 @@ struct server_context {
                 // construct the speculation batch
                 llama_batch_ext_clear(slot.batch_spec.get());
                 std::array<llama_token, 1> seq_id = { slot.id };
-                llama_batch_ext_add_text_token(slot.batch_spec.get(), id, slot.n_past, seq_id.data(), seq_id.size(), true);
+                llama_batch_ext_add_text(slot.batch_spec.get(), id, slot.n_past, seq_id.data(), seq_id.size(), true);
 
                 for (size_t i = 0; i < draft.size(); ++i) {
-                    llama_batch_ext_add_text_token(slot.batch_spec.get(), draft[i], slot.n_past + 1, seq_id.data(), seq_id.size(), true);
+                    llama_batch_ext_add_text(slot.batch_spec.get(), draft[i], slot.n_past + 1, seq_id.data(), seq_id.size(), true);
                 }
 
                 SLT_DBG(slot, "decoding speculative batch, size = %d\n", llama_batch_ext_get_n_tokens(slot.batch_spec.get()));

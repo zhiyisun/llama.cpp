@@ -905,7 +905,7 @@ extern "C" {
     //  0 : success
     // -1 : not enough space in the batch
     // -2 : embd is already set, cannot add text tokens
-    LLAMA_API int32_t llama_batch_ext_add_text_token(
+    LLAMA_API int32_t llama_batch_ext_add_text(
         struct llama_batch_ext * batch,
                    llama_token   token,
                      llama_pos   pos,
