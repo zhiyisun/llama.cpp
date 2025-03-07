@@ -687,11 +687,11 @@ static float make_qkxs_quants(int n, int nmin, int nmax, const float * restrict 
         }
         return 0.0f;
     }
+
     bool negative_scale = false;
     if (signed_scale && -nmin != nmax) {
         // the max side should have the biggest range
-        // FIXME: this is incorrect when the weights[.] do not sort in the same order as fabsf(x[.])
-        //        or is it some other condition?
+        // FIXME: this is not always the best sign
         if ((x[amax_i] < 0.0f) == (-nmin < nmax)) {
             // [-4, 3] ==> [-3, 4]
             const int tmp = nmin;
@@ -762,7 +762,7 @@ static float make_qkxs_quants(int n, int nmin, int nmax, const float * restrict 
                     .i=i,
                 };
             } else {
-                // stop when the inverse scale would result in clamping the max (FIXME: most important) value
+                // stop when the inverse scale would result in clamping the most important value
                 break;
             }
         }
@@ -800,6 +800,182 @@ static float make_qkxs_quants(int n, int nmin, int nmax, const float * restrict 
     }
 
     return negative_scale ? -scale : scale;
+}
+
+// Very similar to make_qkxs_quants, but the sign of the scale is not assumed to be the sign of the absmax value.
+static float make_qkxss_quants(int n, int nmin, int nmax, const float * restrict x, const float * restrict weights, int8_t * restrict L, int8_t * restrict Laux, struct fraction * restrict Faux) {
+    // start at zero
+    nmin = MIN(0, nmin);
+    nmax = MAX(0, nmax);
+    float amax = 0.0f;
+    float min = 0.0f;
+    float max = 0.0f;
+    float w_amax = 0.0f;
+    int amax_i = -1;
+    int w_amax_i = -1;
+    for (int i = 0; i < n; ++i) {
+        const float w = weights ? weights[i] : x[i] * x[i];
+        const float ax = fabsf(x[i]);
+        const float wax = w * ax;
+        if (ax > amax) { amax = ax; amax_i = i; }
+        if (x[i] > max) { max = x[i]; }
+        if (x[i] < min) { min = x[i]; }
+        // Find the most important value
+        if (wax > w_amax) { w_amax = wax; w_amax_i = i; }
+    }
+
+    if (amax < GROUP_MAX_EPS || amax_i < 0 || w_amax_i < 0) { // all zero
+        for (int i = 0; i < n; ++i) { L[i] = 0; }
+        return 0.0f;
+    }
+
+    // Use the side which will clamp first.
+    // The first clamped value is the absmax at the end of the common range.
+    // TODO: reduce the search space when one of the ranges is 0
+    const int amax_range = MIN(-nmin, nmax);
+    float sumlx_p = 0.0f;
+    float suml2_p = 0.0f;
+    float sumlx_n = 0.0f;
+    float suml2_n = 0.0f;
+    float scale = 0.0f;
+    float best = 0.0f;
+    float best_denom = 1.0f;
+    int best_i = -2; // not consecutive with 0..n_frac
+    // Pre-calculate the half-point for the common range.
+    // All smaller vectors have a representable vector with twice the values, and thus can be skipped.
+    if (amax_range > 1) {
+        const float iscale = ((float)(amax_range / 2 + 1))/amax;
+        for (int i = 0; i < n; ++i) {
+            const float w = weights ? weights[i] : x[i] * x[i];
+            int l = MAX(nmin, MIN(lroundf(x[i] * iscale), nmax));
+            Laux[i] = l;
+            suml2_p += w * l * l;
+            sumlx_p += w * l * x[i];
+        }
+        sumlx_n = -sumlx_p;
+        suml2_n = suml2_p;
+        const float current_p = sumlx_p * sumlx_p;
+        if (suml2_p > 0.0f && current_p * best_denom > best * suml2_p) {
+            best = current_p;
+            best_denom = suml2_p;
+            scale = sumlx_p / suml2_p;
+            for (int i = 0; i < n; ++i) {
+                L[i] = Laux[i];
+            }
+            best_i = -1; // right before 0 of the loop after sorting
+        }
+    } else {
+        for (int i = 0; i < n; ++i) {
+            Laux[i] = 0;
+        }
+    }
+
+    const int imax_range = MAX(nmax, -nmin);
+    const int max_odd = 2*(imax_range + 1) + 1;
+    const float wmax = fabsf(x[w_amax_i]);
+    int n_frac = 0;
+    for (int i = 0; i < n; ++i) {
+        // assuming nmin <= nmax
+        const int odd_max = MAX(nmax, -nmin);
+        const float v = fabsf(x[i]);
+        const float v_max_odd = v * max_odd;
+        for (int j = abs(Laux[i]); j < odd_max; ++j) {
+            const float odd = 2*j + 1;
+            const float wmax_odd = wmax * odd;
+            if (wmax_odd < v_max_odd) {
+                Faux[n_frac++] = (struct fraction){
+                    .numer=v,
+                    .denom=odd,
+                    .i=i,
+                };
+            } else {
+                // stop when the inverse scale would result in clamping the most important value
+                break;
+            }
+        }
+    }
+
+    qsort(Faux, n_frac, sizeof(struct fraction), compare_fractions_desc);
+
+    const float max_common_odd = (MIN(nmax, -nmin) * 2) + 1;
+    const float max_odd_p = (nmax * 2) + 1;
+    const float max_odd_n = (-nmin * 2) + 1;
+
+    for (int i = 0; i < n_frac; ++i) {
+        // maximize the weighted cosine similarity
+        const int ii = Faux[i].i;
+        const float w = weights ? weights[ii] : x[ii] * x[ii];
+        const float lx = w * Faux[i].numer;
+        const float odd = Faux[i].denom;
+        const float l2 = w * odd;
+
+        Laux[ii] += x[ii] < 0.0f ? -1 : 1;
+
+        float sumlx = 0.0f;
+        float proj = 0.0f;
+        float norm = 0.0f;
+        if (odd < max_common_odd) {
+            sumlx_p += lx;
+            suml2_p += l2;
+            sumlx_n -= lx;
+            suml2_n += l2;
+
+            sumlx = sumlx_p;
+            proj = sumlx_p * sumlx_p;
+            norm = suml2_p;
+
+            // avoid double-copying Laux in a single iteration
+            if (suml2_p != suml2_n && suml2_p * suml2_n > 0.0f) {
+                const float proj_n = sumlx_n * sumlx_n;
+                if (proj_n * norm > proj * suml2_n) {
+                    sumlx = sumlx_n;
+                    proj = proj_n;
+                    norm = suml2_n;
+                }
+            }
+        } else if (x[ii] < 0.0f ? odd < max_odd_n : odd < max_odd_p) {
+            sumlx_p += lx;
+            suml2_p += l2;
+
+            sumlx = sumlx_p;
+            proj = sumlx_p * sumlx_p;
+            norm = suml2_p;
+        } else {
+            // outside the positive range means we're now into negatives
+            sumlx_n -= lx;
+            suml2_n += l2;
+
+            sumlx = sumlx_n;
+            proj = sumlx_n * sumlx_n;
+            norm = suml2_n;
+        }
+        if (norm > 0.0f && proj * best_denom > best * norm) {
+            best = proj;
+            best_denom = norm;
+            scale = sumlx / norm;
+            if (i == best_i + 1) {
+                // reduce copies for consecutive bests
+                L[ii] += x[ii] < 0.0f ? -1 : 1;
+            } else {
+                for (int j = 0; j < n; ++j) {
+                    L[j] = Laux[j];
+                }
+            }
+            best_i = i;
+        }
+    }
+
+    if (scale < 0.0f) {
+        for (int i = 0; i < n; ++i) {
+            L[i] = MAX(nmin, MIN(-L[i], nmax)) - nmin;
+        }
+    } else {
+        for (int i = 0; i < n; ++i) {
+            L[i] = MAX(nmin, MIN(L[i], nmax)) - nmin;
+        }
+    }
+
+    return scale;
 }
 
 // non-linear exhaustive search with cumulative sums
@@ -874,6 +1050,7 @@ static float make_qkxs_nl_quants(int n, int k, const float * restrict x, const f
     }
 
     // Non-linear mappings are usually not symmetric, so try negating the scale
+    // This is the same as above, but keeping the old best if the new best is not better.
     if (signed_scale) {
         for (int i = 0; i < n; ++i) {
             Laux[i] = koff;
@@ -1298,7 +1475,6 @@ void quantize_row_q3_K_ref(const float * restrict x, block_q3_K * restrict y, in
         float amax = 0;
         for (int j = 0; j < QK_K/16; ++j) {
             scales[j] = make_qkxs_quants(16, -4, 3, x + 16*j, weights, L + 16*j, Laux, Faux, true);
-            // scales[j] = make_q3_quants(16, 4, x + 16*j, L + 16*j, true);
             float scale = fabsf(scales[j]);
             if (scale > amax) {
                 amax = scale; max_scale = scales[j];
@@ -1323,21 +1499,6 @@ void quantize_row_q3_K_ref(const float * restrict x, block_q3_K * restrict y, in
         } else {
             y[i].d = GGML_FP32_TO_FP16(0.f);
         }
-
-        // int8_t sc;
-        // for (int j = 0; j < QK_K/16; ++j) {
-        //     sc = j < 8 ? y[i].scales[j] & 0xF : y[i].scales[j-8] >> 4;
-        //     sc = (sc | (((y[i].scales[8 + j%4] >> (2*(j/4))) & 3) << 4)) - 32;
-        //     float d = GGML_FP16_TO_FP32(y[i].d) * sc;
-        //     if (!d) {
-        //         continue;
-        //     }
-        //     for (int ii = 0; ii < 16; ++ii) {
-        //         int l = nearest_int(x[16*j + ii]/d);
-        //         l = MAX(-4, MIN(3, l));
-        //         L[16*j + ii] = l + 4;
-        //     }
-        // }
 
         memset(y[i].hmask, 0, QK_K/8);
         // We put the high-bit for the 1st 8 quants into bit 0, the next 8 into bit 1, etc.
@@ -1441,14 +1602,12 @@ static void quantize_row_q3_K_impl(const float * restrict x, block_q3_K * restri
             for (int l = 0; l < 16; ++l) sumw += weight[l];
             sw[j] = sumw;
 
-            // scales[j] = make_qx_quants(16, 4, x + 16*j, L + 16*j, 1, weight);
             scales[j] = make_qkxs_quants(16, -4, 3, x + 16*j, weight, L + 16*j, Laux, Faux, true);
 
         }
 
         memset(y[i].scales, 0, 12);
 
-        // float d_block = make_qx_quants(QK_K/16, 32, scales, Ls, 1, sw);
         float d_block = make_qkxs_quants(QK_K/16, -32, 31, scales, sw, Ls, Laux, Faux, true);
         for (int j = 0; j < QK_K/16; ++j) {
             int l = Ls[j];
@@ -1461,21 +1620,6 @@ static void quantize_row_q3_K_impl(const float * restrict x, block_q3_K * restri
             y[i].scales[j%4 + 8] |= (l << (2*(j/4)));
         }
         y[i].d = GGML_FP32_TO_FP16(d_block);
-
-        // int8_t sc;
-        // for (int j = 0; j < QK_K/16; ++j) {
-        //     sc = j < 8 ? y[i].scales[j] & 0xF : y[i].scales[j-8] >> 4;
-        //     sc = (sc | (((y[i].scales[8 + j%4] >> (2*(j/4))) & 3) << 4)) - 32;
-        //     float d = GGML_FP16_TO_FP32(y[i].d) * sc;
-        //     if (!d) {
-        //         continue;
-        //     }
-        //     for (int ii = 0; ii < 16; ++ii) {
-        //         int l = nearest_int(x[16*j + ii]/d);
-        //         l = MAX(-4, MIN(3, l));
-        //         L[16*j + ii] = l + 4;
-        //     }
-        // }
 
         memset(y[i].hmask, 0, QK_K/8);
         // We put the high-bit for the 1st 8 quants into bit 0, the next 8 into bit 1, etc.
@@ -2526,7 +2670,7 @@ static void quantize_row_tq2_0_impl(const float * restrict x, block_tq2_0 * rest
         const float * xb = x + QK_K * ib;
         const float * qw = quant_weights + QK_K * ib;
         for (int j = 0; j < QK_K; ++j) { weight[j] = qw[j] * sqrtf(sigma2 + xb[j]*xb[j]); }
-        float d = make_qkxs_quants(QK_K, -1, 2, xb, weight, L, Laux, Faux, true);
+        float d = make_qkxss_quants(QK_K, -1, 2, xb, weight, L, Laux, Faux);
         y[ib].d = GGML_FP32_TO_FP16(d);
 
         for (size_t j = 0; j < sizeof(y->qs); j += 32) {
