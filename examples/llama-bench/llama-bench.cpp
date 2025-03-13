@@ -1445,7 +1445,6 @@ static void test_prompt(llama_context * ctx, int n_prompt, int n_batch, int n_th
             tokens[i] = std::rand() % n_vocab;
         }
         llama_batch_ext_ptr batch(llama_batch_ext_init_from_text(tokens.data(), n_tokens, 0, 0, true));
-        llama_batch_ext_set_output_last(batch.get());
         llama_decode_ext(ctx, batch.get());
         n_processed += n_tokens;
     }
