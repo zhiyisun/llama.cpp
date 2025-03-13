@@ -48,7 +48,7 @@ int main(int argc, char ** argv) {
     auto tokens = common_tokenize(ctx, params.prompt, true);
 
     // prepare the batch
-    llama_batch_ext * batch = llama_batch_ext_init_from_text(tokens.data(), tokens.size(), 0, 0);
+    llama_batch_ext * batch = llama_batch_ext_init_from_text(tokens.data(), tokens.size(), 0, 0, true);
 
     // evaluate prompt
     llama_decode_ext(ctx, batch);

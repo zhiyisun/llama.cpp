@@ -341,10 +341,14 @@ struct llama_batch_ext * llama_batch_ext_init_from_text(
             llama_token * tokens,
                 int32_t   n_tokens,
                 int32_t   pos0,
-                int32_t   seq_id) {
+                int32_t   seq_id,
+                  bool    output_last) {
     llama_batch_ext * batch = llama_batch_ext_init(n_tokens, 1);
     for (int32_t i = 0; i < n_tokens; i++) {
         llama_batch_ext_add_text(batch, tokens[i], pos0 + i, &seq_id, 1, false);
+    }
+    if (output_last) {
+        llama_batch_ext_set_output_last(batch);
     }
     return batch;
 }

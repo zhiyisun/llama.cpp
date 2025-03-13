@@ -108,8 +108,11 @@ int main(int argc, char ** argv) {
         }
 
         // prepare a batch for the prompt
-        llama_batch_ext * batch = llama_batch_ext_init_from_text(prompt_tokens.data(), prompt_tokens.size(), 0, 0);
+        llama_pos n_past = 0;
+        llama_batch_ext * batch = llama_batch_ext_init_from_text(prompt_tokens.data(), prompt_tokens.size(), n_past, 0, true);
         llama_batch_ext_set_output_last(batch);
+        n_past += llama_batch_ext_get_n_tokens(batch);
+
         llama_token new_token_id;
         while (true) {
             // check if we have enough space in the context to evaluate this batch
@@ -147,7 +150,8 @@ int main(int argc, char ** argv) {
             // prepare the next batch with the sampled token
             llama_batch_ext_clear(batch);
             llama_seq_id seq_id = 0;
-            llama_batch_ext_add_text(batch, new_token_id, 0, &seq_id, 1, true);
+            llama_batch_ext_add_text(batch, new_token_id, n_past, &seq_id, 1, true);
+            n_past++;
         }
 
         llama_batch_ext_free(batch);

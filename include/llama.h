@@ -928,12 +928,14 @@ extern "C" {
     // Same with llama_batch_init, but initializes the batch with the provided text tokens
     // First token will be at position pos0
     // The sequence ID will be fixed to seq_id
+    // If output_last is true, the last token will have output set
     // The batch has to be freed with llama_batch_ext_free()
     LLAMA_API struct llama_batch_ext * llama_batch_ext_init_from_text(
             llama_token * tokens,
                 int32_t   n_tokens,
                 int32_t   pos0,
-                int32_t   seq_id);
+                int32_t   seq_id,
+                   bool   output_last);
 
     // Same with llama_batch_init, but initializes the batch with the provided raw embeddings
     // First token will be at position pos0

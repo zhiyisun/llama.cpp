@@ -166,9 +166,9 @@ int main(int argc, char ** argv) {
     const auto t_enc_start = ggml_time_us();
 
     // eval the prompt with both models
-    llama_batch_ext_ptr batch0(llama_batch_ext_init_from_text( inp.data(), n_input - 1, 0, 0));
-    llama_batch_ext_ptr batch1(llama_batch_ext_init_from_text(&inp.back(),           1, 0, 0));
-    llama_batch_ext_ptr batch2(llama_batch_ext_init_from_text( inp.data(), n_input    , 0, 0));
+    llama_batch_ext_ptr batch0(llama_batch_ext_init_from_text( inp.data(), n_input - 1, 0, 0, true));
+    llama_batch_ext_ptr batch1(llama_batch_ext_init_from_text(&inp.back(),           1, 0, 0, true));
+    llama_batch_ext_ptr batch2(llama_batch_ext_init_from_text( inp.data(), n_input    , 0, 0, true));
     llama_decode_ext(ctx_tgt, batch0);
     llama_decode_ext(ctx_tgt, batch1);
     llama_decode_ext(ctx_dft, batch2);

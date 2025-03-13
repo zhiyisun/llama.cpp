@@ -143,7 +143,7 @@ int main(int argc, char ** argv) {
 
     // prepare a batch for the prompt
 
-    llama_batch_ext * batch = llama_batch_ext_init_from_text(prompt_tokens.data(), prompt_tokens.size(), 0, 0);
+    llama_batch_ext * batch = llama_batch_ext_init_from_text(prompt_tokens.data(), prompt_tokens.size(), 0, 0, true);
     llama_batch_ext_set_output_last(batch);
 
     // main loop
