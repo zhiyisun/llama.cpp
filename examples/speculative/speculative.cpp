@@ -45,7 +45,7 @@ int main(int argc, char ** argv) {
     }
 
     common_init();
-#ifdef 0
+#if 0
     if (params.speculative.model.empty()) {
         LOG_ERR("%s: --model-draft is required\n", __func__);
         return 1;
@@ -166,9 +166,12 @@ int main(int argc, char ** argv) {
     const auto t_enc_start = ggml_time_us();
 
     // eval the prompt with both models
-    llama_decode(ctx_tgt, llama_batch_get_one( inp.data(), n_input - 1));
-    llama_decode(ctx_tgt, llama_batch_get_one(&inp.back(),           1));
-    llama_decode(ctx_dft, llama_batch_get_one( inp.data(), n_input));
+    llama_batch_ext_ptr batch0(llama_batch_ext_init_from_text( inp.data(), n_input - 1, 0, 0));
+    llama_batch_ext_ptr batch1(llama_batch_ext_init_from_text(&inp.back(),           1, 0, 0));
+    llama_batch_ext_ptr batch2(llama_batch_ext_init_from_text( inp.data(), n_input    , 0, 0));
+    llama_decode_ext(ctx_tgt, batch0);
+    llama_decode_ext(ctx_tgt, batch1);
+    llama_decode_ext(ctx_dft, batch2);
 
     const auto t_enc_end = ggml_time_us();
 

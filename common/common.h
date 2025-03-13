@@ -607,7 +607,7 @@ struct common_batch {
             n_outputs++;
         }
     }
-    void add_text(llama_token token, llama_pos pos, std::vector<llama_seq_id> seq_ids, bool logits) {
+    void add_text_multi_seq(llama_token token, llama_pos pos, std::vector<llama_seq_id> seq_ids, bool logits) {
         llama_batch_ext_add_text(batch.get(), token, pos, seq_ids.data(), seq_ids.size(), logits);
         tokens.push_back({token, seq_ids[0], logits});
         if (logits) {

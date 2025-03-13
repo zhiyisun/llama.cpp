@@ -92,8 +92,10 @@ int main(int argc, char ** argv) {
     const auto t_enc_start = ggml_time_us();
 
     // eval the prompt
-    llama_decode(ctx, llama_batch_get_one( inp.data(), n_input - 1));
-    llama_decode(ctx, llama_batch_get_one(&inp.back(),           1));
+    llama_batch_ext_ptr batch0(llama_batch_ext_init_from_text( inp.data(), n_input - 1, 0, 0));
+    llama_batch_ext_ptr batch1(llama_batch_ext_init_from_text(&inp.back(),           1, 0, 0));
+    llama_decode_ext(ctx, batch0.get());
+    llama_decode_ext(ctx, batch1.get());
 
     for (int s = 1; s < W + G + 1; ++s) {
         llama_kv_self_seq_cp(ctx, 0, s, -1, -1);
