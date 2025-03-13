@@ -980,7 +980,7 @@ extern "C" {
     LLAMA_API int32_t llama_batch_ext_set_output_last(struct llama_batch_ext * batch);
 
     // Get a "view" from a number of tokens offset
-    // Return returned batch must be freed with llama_batch_free()
+    // Return returned batch must be freed with llama_batch_ext_free()
     LLAMA_API struct llama_batch_ext * llama_batch_ext_get_view(
         struct llama_batch_ext * batch,
                        int32_t   offset,
