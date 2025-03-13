@@ -900,7 +900,7 @@ extern "C" {
     //
     DEPRECATED(LLAMA_API struct llama_batch llama_batch_get_one(
                   llama_token * tokens,
-                      int32_t   n_tokens), "use llama_batch_ext API instead");
+                      int32_t   n_tokens), "use llama_batch_ext_init_from_text instead");
 
     // Allocates a batch of tokens on the heap that can hold a maximum of n_tokens
     // Each token can be assigned up to n_seq_max sequence ids
@@ -912,7 +912,7 @@ extern "C" {
     DEPRECATED(LLAMA_API struct llama_batch llama_batch_init(
                     int32_t n_tokens,
                     int32_t embd,
-                    int32_t n_seq_max), "use llama_batch_ext API instead");
+                    int32_t n_seq_max), "use llama_batch_ext_init instead");
 
     // Frees a batch of tokens allocated with llama_batch_init()
     DEPRECATED(LLAMA_API void llama_batch_free(struct llama_batch batch),
@@ -950,28 +950,32 @@ extern "C" {
 
     // Add text tokens to the batch
     // Return values:
-    //  0 : success
     // -1 : not enough space in the batch
     // -2 : embd is already set, cannot add text tokens
+    // otherwise, returns the output ID
     LLAMA_API int32_t llama_batch_ext_add_text(
         struct llama_batch_ext * batch,
                    llama_token   token,
                      llama_pos   pos,
             const llama_seq_id * seq_ids,
                         size_t   n_seq_ids,
-                         float   logits);
+                          bool   output);
 
-    // Set logits for the token in the ith sequence
-    // If pos == -1, logits will be set for the all tokens
-    // Returns -1 if the token is not in the batch
-    LLAMA_API int32_t llama_batch_ext_set_logits(
+    // Set output (logits/embeddings) for the token in the ith sequence
+    // If pos == -1, output will be set for the all tokens
+    // Return values:
+    // -1 : the token is not in the batch
+    // otherwise, returns the output ID
+    LLAMA_API int32_t llama_batch_ext_set_output(
         struct llama_batch_ext * batch,
                      llama_pos   pos,
                   llama_seq_id   seq_id);
 
-    // Set logits for the last added token
-    // Returns -1 if there is no tokens in the batch
-    LLAMA_API int32_t llama_batch_ext_set_logits_last(struct llama_batch_ext * batch);
+    // Set output (logits/embeddings) for the last added token
+    // Return values:
+    // -1 : the batch is empty
+    // otherwise, returns the output ID
+    LLAMA_API int32_t llama_batch_ext_set_output_last(struct llama_batch_ext * batch);
 
     // Get a "view" from a number of tokens offset
     // Return returned batch must be freed with llama_batch_free()

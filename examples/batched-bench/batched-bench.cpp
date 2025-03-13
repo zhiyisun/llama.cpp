@@ -122,7 +122,7 @@ int main(int argc, char ** argv) {
                         llama_batch_ext_add_text(batch, 0, i, &j, 1, false);
                     }
                 }
-                llama_batch_ext_set_logits_last(batch);
+                llama_batch_ext_set_output_last(batch);
 
                 const auto t_pp_start = ggml_time_us();
 

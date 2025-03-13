@@ -131,7 +131,7 @@ int main(int argc, char ** argv) {
     }
 
     // llama_decode will output logits only for the last token of the prompt
-    llama_batch_ext_set_logits_last(batch);
+    llama_batch_ext_set_output_last(batch);
 
     if (llama_decode_ext(ctx, batch) != 0) {
         LOG_ERR("%s: llama_decode() failed\n", __func__);

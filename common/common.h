@@ -606,7 +606,7 @@ struct common_batch {
     }
     void set_logits_last() {
         if (!tokens.empty()) {
-            llama_batch_ext_set_logits_last(batch.get());
+            llama_batch_ext_set_output_last(batch.get());
             tokens.back().logits = true;
         }
     }
