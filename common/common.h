@@ -516,7 +516,6 @@ void string_process_escapes(std::string & input);
 std::string string_from(bool value);
 std::string string_from(const std::vector<int> & values);
 std::string string_from(const struct llama_context * ctx, const std::vector<llama_token> & tokens);
-std::string string_from(const struct llama_context * ctx, const struct llama_batch & batch);
 
 //
 // Filesystem utils
@@ -587,10 +586,10 @@ struct common_batch {
     llama_batch_ext_ptr batch;
     struct batch_token {
         llama_token  token;
-        llama_seq_id seq_id;
         bool         logits;
     };
     std::vector<batch_token> tokens;
+    int n_outputs = 0;
     common_batch() = default;
     common_batch(int32_t n_tokens, int32_t n_seq_max) {
         batch.reset(llama_batch_ext_init(n_tokens, n_seq_max));
@@ -602,7 +601,17 @@ struct common_batch {
     }
     void add_text(llama_token token, llama_pos pos, llama_seq_id seq_id, bool logits) {
         llama_batch_ext_add_text(batch.get(), token, pos, &seq_id, 1, logits);
-        tokens.push_back({token, seq_id, logits});
+        tokens.push_back({token, logits});
+        if (logits) {
+            n_outputs++;
+        }
+    }
+    void add_text(llama_token token, llama_pos pos, std::vector<llama_seq_id> seq_ids, bool logits) {
+        llama_batch_ext_add_text(batch.get(), token, pos, seq_ids.data(), seq_ids.size(), logits);
+        tokens.push_back({token, logits});
+        if (logits) {
+            n_outputs++;
+        }
     }
     void set_logits_last() {
         if (!tokens.empty()) {
@@ -622,6 +631,9 @@ struct common_batch {
         view.tokens.reserve(n_tokens);
         for (int32_t i = 0; i < n_tokens; i++) {
             view.tokens.push_back(tokens[offset + i]);
+            if (tokens[offset + i].logits) {
+                view.n_outputs++;
+            }
         }
         return view;
     }

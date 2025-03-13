@@ -995,9 +995,9 @@ extern "C" {
     // Stores the encoder output internally for later use by the decoder cross-attention layers.
     //   0 - success
     // < 0 - error. the KV cache state is restored to the state before this call
-    DEPRECATED(LLAMA_API int32_t llama_encode(
+    LLAMA_API int32_t llama_encode(
             struct llama_context * ctx,
-              struct llama_batch   batch), "use llama_batch_ext API instead");
+              struct llama_batch   batch);
 
     LLAMA_API int32_t llama_encode_ext(
             struct llama_context * ctx,
@@ -1007,9 +1007,9 @@ extern "C" {
     //   0 - success
     //   1 - could not find a KV slot for the batch (try reducing the size of the batch or increase the context)
     // < 0 - error. the KV cache state is restored to the state before this call
-    DEPRECATED(LLAMA_API int32_t llama_decode(
+    LLAMA_API int32_t llama_decode(
             struct llama_context * ctx,
-              struct llama_batch batch), "use llama_batch_ext API instead");
+              struct llama_batch batch);
 
     LLAMA_API int32_t llama_decode_ext(
             struct llama_context * ctx,
