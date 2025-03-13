@@ -194,7 +194,7 @@ int main(int argc, char ** argv){
 
         // KV cache management
         // clean the cache of draft tokens that weren't accepted
-        llama_kv_cache_seq_rm(ctx, 0, n_past, -1);
+        llama_kv_self_seq_rm(ctx, 0, n_past, -1);
 
         const llama_seq_id seq_id = 0;
         llama_batch_ext_clear(batch_tgt);
