@@ -133,7 +133,7 @@ int main(int argc, char ** argv) {
         result1 += next_token_str;
 
         llama_batch_ext_clear(batch);
-        llama_seq_id seq_id = 1;
+        llama_seq_id seq_id = 0;
         llama_batch_ext_add_text(batch, next_token, 0, &seq_id, 1, true);
 
         if (llama_decode_ext(ctx2, batch)) {
@@ -215,7 +215,7 @@ int main(int argc, char ** argv) {
         result2 += next_token_str;
 
         llama_batch_ext_clear(batch);
-        llama_seq_id seq_id = 1;
+        llama_seq_id seq_id = 1; // seq 1 instead of 0
         llama_batch_ext_add_text(batch, next_token, 0, &seq_id, 1, true);
 
         if (llama_decode_ext(ctx3, batch)) {

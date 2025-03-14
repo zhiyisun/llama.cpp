@@ -182,7 +182,7 @@ int main(int argc, char ** argv) {
             // prepare the next batch with the sampled token
             llama_batch_ext_clear(batch);
             llama_seq_id seq_id = 0;
-            llama_batch_ext_add_text(batch, new_token_id, 0, &seq_id, 1, true);
+            llama_batch_ext_add_text(batch, new_token_id, n_pos, &seq_id, 1, true);
 
             n_decode += 1;
         }
