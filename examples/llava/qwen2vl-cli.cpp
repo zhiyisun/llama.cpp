@@ -67,7 +67,7 @@ static bool qwen2vl_eval_image_embed(llama_context * ctx_llama, const struct lla
         memcpy(&batch_mrope_pos[n_eval * 3], &mrope_pos[img_tokens * 3 + processed], n_eval * sizeof(llama_pos));
 
         float * batch_embd = image_embed->embed+i*n_embd;
-        auto batch = llama_batch_ext_ptr::from_embd(batch_embd, n_eval, n_embd, 0, 0);
+        auto batch = llama_batch_ext_ptr::init_from_embd(batch_embd, n_eval, n_embd, 0, 0);
         llama_batch_ext_set_pos(batch.get(), batch_mrope_pos.data(), n_eval);
 
         if (llama_decode_ext(ctx_llama, batch.get())) {
