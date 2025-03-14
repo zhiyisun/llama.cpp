@@ -93,7 +93,7 @@ static int eval_text(gemma3_context & ctx, std::string input, bool logits_last =
     llama_batch_ext_clear(ctx.batch.get());
     for (llama_token & t : tokens) {
         llama_seq_id seq_id = 0;
-        llama_batch_ext_add_text(ctx.batch.get(), t, 0, &seq_id, 1, false);
+        llama_batch_ext_add_text(ctx.batch.get(), t, ctx.n_past++, &seq_id, 1, false);
     }
     if (logits_last) {
         llama_batch_ext_set_output_last(ctx.batch.get());
