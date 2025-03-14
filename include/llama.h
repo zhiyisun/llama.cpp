@@ -950,6 +950,12 @@ extern "C" {
             int32_t   pos0,
             int32_t   seq_id);
 
+    // Set arbitrary token to the embeddings batch
+    // Note: this is only to be used in conjunction with llama_batch_ext_init_from_embd()
+    // n_pos must match the n_tokens of the batch
+    // Returns -1 if n_pos does not match the n_tokens of the batch
+    LLAMA_API int32_t llama_batch_ext_set_pos(struct llama_batch_ext * batch, llama_pos * pos, size_t n_pos);
+
     // Get the number of tokens in the batch
     LLAMA_API int32_t llama_batch_ext_get_n_tokens(const struct llama_batch_ext * batch);
 

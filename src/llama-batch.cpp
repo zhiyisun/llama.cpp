@@ -405,6 +405,14 @@ struct llama_batch_ext * llama_batch_ext_init_from_embd(
     return batch;
 }
 
+int32_t llama_batch_ext_set_pos(struct llama_batch_ext * batch, llama_pos * pos, size_t n_pos) {
+    if (batch->n_tokens != n_pos) {
+        return -1;
+    }
+    memcpy(batch->pos, pos, n_pos * sizeof(llama_pos));
+    return 0;
+}
+
 int32_t llama_batch_ext_get_n_tokens(const struct llama_batch_ext * batch) {
     return batch->n_tokens;
 }
