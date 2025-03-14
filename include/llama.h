@@ -938,11 +938,14 @@ extern "C" {
                    bool   output_last);
 
     // Same with llama_batch_init, but initializes the batch with the provided raw embeddings
+    // Size of embd should be n_tokens * n_embd
+    // n_embd is the number of embeddings per token, can be obtained from llama_model_n_embd()
     // First token will be at position pos0
     // The sequence ID will be fixed to seq_id
     // The batch has to be freed with llama_batch_ext_free()
     LLAMA_API struct llama_batch_ext * llama_batch_ext_init_from_embd(
               float * embd,
+            size_t    n_tokens,
             size_t    n_embd,
             int32_t   pos0,
             int32_t   seq_id);

@@ -148,7 +148,7 @@ static int eval_image(gemma3_context & ctx, std::string & fname) {
     int64_t t1 = ggml_time_ms();
     eval_text(ctx, "<start_of_image>");
     llama_set_causal_attn(ctx.lctx, false);
-    llama_batch_ext_ptr batch_img(llama_batch_ext_init_from_embd(image_embd_v.data(), n_tokens, ctx.n_past, 0));
+    llama_batch_ext_ptr batch_img(llama_batch_ext_init_from_embd(image_embd_v.data(), n_tokens, n_embd, ctx.n_past, 0));
     if (llama_decode_ext(ctx.lctx, batch_img.get())) {
         LOG_ERR("failed to decode image\n");
         return 1;
