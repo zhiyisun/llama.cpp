@@ -34,6 +34,7 @@ typedef std::unique_ptr<llama_sampler, llama_sampler_deleter> llama_sampler_ptr;
 typedef std::unique_ptr<llama_adapter_lora, llama_adapter_lora_deleter> llama_adapter_lora_ptr;
 
 struct llama_batch_ext_ptr : std::unique_ptr<llama_batch_ext, llama_batch_ext_deleter> {
+    llama_batch_ext_ptr() : std::unique_ptr<llama_batch_ext, llama_batch_ext_deleter>() {}
     llama_batch_ext_ptr(llama_batch_ext * batch) : std::unique_ptr<llama_batch_ext, llama_batch_ext_deleter>(batch) {}
 
     // convenience function to create a batch from text tokens, without worrying about manually freeing it
