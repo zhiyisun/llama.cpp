@@ -5173,7 +5173,6 @@ static void quantize_row_iq4_nl_impl(const int super_block_size, const int block
             for (int j = 0; j < block_size; ++j) weight[j] = qw[j] * sqrtf(sigma2 + xb[j]*xb[j]);
         } else {
             for (int j = 0; j < block_size; ++j) weight[j] = sqrtf(sigma2 + xb[j]*xb[j]);
-            // for (int j = 0; j < block_size; ++j) weight[j] = 1;
         }
         float amax = 0;
         for (int j = 0; j < block_size; ++j) {
@@ -5258,7 +5257,6 @@ size_t quantize_iq4_nl(const float * restrict src, void * restrict dst, int64_t 
     return nrow * nblock * sizeof(block_iq4_nl);
 }
 
-//void quantize_row_iq4_nl_ref(const float * restrict x, void * restrict vy, int64_t k) {
 void quantize_row_iq4_nl_ref(const float * restrict x, block_iq4_nl * restrict y, int64_t k) {
     GGML_ASSERT(k%QK4_NL == 0);
     int64_t nblock = k/QK4_NL;
