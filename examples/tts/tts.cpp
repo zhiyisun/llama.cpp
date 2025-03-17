@@ -920,7 +920,7 @@ lovely<|t_0.56|><|code_start|><|634|><|596|><|1766|><|1556|><|1306|><|1285|><|14
                 i_batch[i] = llama_batch_ext_get_n_tokens(batch);
 
                 // push this new token for next evaluation
-                llama_batch_ext_add_text(batch, new_token_id, n_past, &i, 1, false);
+                llama_batch_ext_add_text(batch, new_token_id, n_past, &i, 1, true);
             }
 
             // all streams are finished
