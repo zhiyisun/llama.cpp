@@ -196,7 +196,7 @@ int main(int argc, char ** argv) {
             i_batch[i] = llama_batch_ext_get_n_tokens(batch);
 
             // push this new token for next evaluation
-            llama_batch_ext_add_text(batch, new_token_id, n_cur, &i, 1, false);
+            llama_batch_ext_add_text(batch, new_token_id, n_cur, &i, 1, true);
 
             n_decode += 1;
         }

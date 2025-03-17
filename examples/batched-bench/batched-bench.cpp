@@ -147,7 +147,7 @@ int main(int argc, char ** argv) {
                     llama_batch_ext_clear(batch);
 
                     for (int j = 0; j < pl; ++j) {
-                        llama_batch_ext_add_text(batch, 0, pp + i, &j, 1, false);
+                        llama_batch_ext_add_text(batch, 0, pp + i, &j, 1, true);
                     }
 
                     if (!decode_helper(ctx, batch, ctx_params.n_batch)) {
