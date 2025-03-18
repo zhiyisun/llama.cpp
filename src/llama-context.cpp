@@ -1057,12 +1057,21 @@ int llama_context::encode(llama_batch & inp_batch) {
     ggml_backend_sched_reset(sched.get());
     ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
 
+    const auto causal_attn_org = cparams.causal_attn;
+
+    // always use non-causal attention for encoder graphs
+    // TODO: this is a tmp solution until we have a proper way to support enc-dec models
+    //       ref: https://github.com/ggml-org/llama.cpp/pull/12181#issuecomment-2730451223
+    cparams.causal_attn = false;
+
     auto * gf = graph_init();
     auto res = graph_build(ctx_compute.get(), gf, ubatch, LLM_GRAPH_TYPE_ENCODER);
 
     ggml_backend_sched_alloc_graph(sched.get(), gf);
 
     res->set_inputs(&ubatch);
+
+    cparams.causal_attn = causal_attn_org;
 
     const auto compute_status = graph_compute(gf, n_tokens > 1);
     switch (compute_status) {
@@ -1627,16 +1636,7 @@ llm_graph_result_ptr llama_context::graph_build(
              ggml_cgraph * gf,
       const llama_ubatch & ubatch,
             llm_graph_type gtype) {
-    const auto causal_attn_org = cparams.causal_attn;
-
-    // always use non-causal attention for encoder graphs
-    // TODO: this is a tmp solution until we have a proper way to support enc-dec models
-    //       ref: https://github.com/ggml-org/llama.cpp/pull/12181#issuecomment-2730451223
-    if (gtype == LLM_GRAPH_TYPE_ENCODER) {
-        cparams.causal_attn = false;
-    }
-
-    auto res = model.build_graph(
+    return model.build_graph(
             {
                 /*.ctx         =*/ ctx,
                 /*.arch        =*/ model.arch,
@@ -1652,12 +1652,6 @@ llm_graph_result_ptr llama_context::graph_build(
                 /*.n_outputs   =*/ n_outputs,
                 /*.cb          =*/ graph_get_cb(),
             }, gf, gtype);
-
-    if (gtype == LLM_GRAPH_TYPE_ENCODER) {
-        cparams.causal_attn = causal_attn_org;
-    }
-
-    return res;
 }
 
 ggml_status llama_context::graph_compute(
