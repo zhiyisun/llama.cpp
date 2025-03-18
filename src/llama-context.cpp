@@ -1627,7 +1627,16 @@ llm_graph_result_ptr llama_context::graph_build(
              ggml_cgraph * gf,
       const llama_ubatch & ubatch,
             llm_graph_type gtype) {
-    return model.build_graph(
+    const auto causal_attn_org = cparams.causal_attn;
+
+    // always use non-causal attention for encoder graphs
+    // TODO: this is a tmp solution until we have a proper way to support enc-dec models
+    //       ref: https://github.com/ggml-org/llama.cpp/pull/12181#issuecomment-2730451223
+    if (gtype == LLM_GRAPH_TYPE_ENCODER) {
+        cparams.causal_attn = false;
+    }
+
+    auto res = model.build_graph(
             {
                 /*.ctx         =*/ ctx,
                 /*.arch        =*/ model.arch,
@@ -1643,6 +1652,12 @@ llm_graph_result_ptr llama_context::graph_build(
                 /*.n_outputs   =*/ n_outputs,
                 /*.cb          =*/ graph_get_cb(),
             }, gf, gtype);
+
+    if (gtype == LLM_GRAPH_TYPE_ENCODER) {
+        cparams.causal_attn = causal_attn_org;
+    }
+
+    return res;
 }
 
 ggml_status llama_context::graph_compute(
