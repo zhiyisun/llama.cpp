@@ -569,17 +569,6 @@ void common_set_adapter_lora(struct llama_context * ctx, std::vector<common_adap
 // Batch utils
 //
 
-// DEPRECATED
-void common_batch_clear(struct llama_batch & batch);
-
-// DEPRECATED
-void common_batch_add(
-                 struct llama_batch & batch,
-                        llama_token   id,
-                          llama_pos   pos,
-    const std::vector<llama_seq_id> & seq_ids,
-                               bool   logits);
-
 // convenient wrapper around llama_batch_ext, to provide a way to get embeddings positions
 // this is meant to be temporary
 struct common_batch {
