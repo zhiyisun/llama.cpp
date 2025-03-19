@@ -945,8 +945,8 @@ extern "C" {
     // The batch has to be freed with llama_batch_ext_free()
     LLAMA_API struct llama_batch_ext * llama_batch_ext_init_from_embd(
               float * embd,
-            size_t    n_tokens,
-            size_t    n_embd,
+             size_t   n_tokens,
+             size_t   n_embd,
             int32_t   pos0,
             int32_t   seq_id);
 
