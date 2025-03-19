@@ -82,7 +82,7 @@ static void batch_add_seq(llama_batch_ext * batch, const std::vector<int32_t> & 
 }
 
 static void batch_decode(llama_context * ctx, llama_batch_ext * batch, float * output, int n_seq, int n_embd, int embd_norm = 2) {
-    const struct llama_model * model = llama_get_model(ctx);
+    const llama_model * model = llama_get_model(ctx);
 
     // clear previous kv_cache values (irrelevant for embeddings)
     llama_kv_self_clear(ctx);
