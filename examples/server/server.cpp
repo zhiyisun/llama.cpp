@@ -3081,7 +3081,6 @@ struct server_context {
                         // without pooling, we want to output the embeddings for all the tokens in the batch
                         const bool need_embd = slot.task_type == SERVER_TASK_TYPE_EMBEDDING && llama_pooling_type(slot.ctx) == LLAMA_POOLING_TYPE_NONE;
 
-                        //batch.add_text(prompt_tokens[slot.n_past], slot.n_past, slot.id, need_embd);
                         llama_batch_ext_add_text(batch.get(), prompt_tokens[slot.n_past], slot.n_past, &slot.id, 1, need_embd);
 
                         if (slot.params.cache_prompt) {
@@ -3109,7 +3108,6 @@ struct server_context {
                         }
 
                         // extract the logits only for the last token
-                        //batch.set_logits_last();
                         llama_batch_ext_set_output_last(batch.get());
 
                         slot.n_decoded = 0;
@@ -3280,13 +3278,10 @@ struct server_context {
                 }
 
                 // construct the speculation batch
-                //slot.batch_spec.clear();
-                //slot.batch_spec.add_text(id, slot.n_past, slot.id, true);
                 llama_batch_ext_clear(slot.batch_spec.get());
                 llama_batch_ext_add_text(slot.batch_spec.get(), id, slot.n_past, &slot.id, 1, true);
 
                 for (size_t i = 0; i < draft.size(); ++i) {
-                    //slot.batch_spec.add_text(draft[i], slot.n_past + 1 + i, slot.id, true);
                     llama_batch_ext_add_text(slot.batch_spec.get(), draft[i], slot.n_past + 1 + i, &slot.id, 1, true);
                 }
 
