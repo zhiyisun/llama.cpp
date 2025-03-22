@@ -1519,18 +1519,11 @@ static void quantize_row_q2_K_impl(const float * GGML_RESTRICT x, block_q2_K * G
 
     uint8_t L[QK_K];
     uint8_t Laux[16];
-    int8_t Lsaux[16];
     float mins[QK_K/16];
     float scales[QK_K/16];
     float sw[QK_K/16];
     float weight[16];
-    int8_t Ls[QK_K/16], Lm[QK_K/16];
-
-    struct k_heap_cell heap_cells_s[QK_K/16];
-    float odd_s[16];
-    struct k_heap k_heap_s;
-
-    k_heap_init_linear(&k_heap_s, 0, 15, heap_cells_s, odd_s);
+    uint8_t Ls[QK_K/16], Lm[QK_K/16];
 
     for (int i = 0; i < nb; i++) {
         memset(sw, 0, QK_K/16*sizeof(float));
@@ -1545,8 +1538,8 @@ static void quantize_row_q2_K_impl(const float * GGML_RESTRICT x, block_q2_K * G
         }
 
         float dm, mm;
-        dm  = make_qkxh_quants(QK_K/16, scales, sw, Ls, Lsaux, &k_heap_s, false);
-        mm  = make_qkxh_quants(QK_K/16, mins, sw, Lm, Lsaux, &k_heap_s, false);
+        dm  = make_qp_quants(QK_K/16, 15, scales, Ls, sw);
+        mm  = make_qp_quants(QK_K/16, 15, mins,   Lm, sw);
 
         y[i].d    = GGML_FP32_TO_FP16(dm);
         y[i].dmin = GGML_FP32_TO_FP16(mm);
