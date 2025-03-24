@@ -811,7 +811,7 @@ static void quantize_q8_K_4x8(const float * GGML_RESTRICT x, void * GGML_RESTRIC
         // i.e first four bsums from the first super block, followed by first four bsums from second super block and so on
         for (int j = 0; j < QK_K * 4; j++) {
             int src_offset = (j / (4 * blck_size_interleave)) * blck_size_interleave;
-            int src_id = (j % (4 * blck_size_interleave)) / blck_size_interleave;
+            int src_id     = (j % (4 * blck_size_interleave)) / blck_size_interleave;
             src_offset += (j % blck_size_interleave);
             int index = (((j & 31) >> 3) << 2) + ((j >> 8) << 4) + ((j >> 6) & 3);
 
@@ -5295,8 +5295,7 @@ template <> void gemv<block_q4_K, 8, 8>(int n, float * s, size_t bs, const void 
     ggml_gemv_q4_K_8x8_q8_K(n, s, bs, vx, vy, nr, nc);
 }
 
-template <>
-void gemv<block_iq4_nl, 4, 4>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+template <> void gemv<block_iq4_nl, 4, 4>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
     ggml_gemv_iq4_nl_4x4_q8_0(n, s, bs, vx, vy, nr, nc);
 }
 
@@ -5320,8 +5319,7 @@ template <> void gemm<block_q4_K, 8, 8>(int n, float * s, size_t bs, const void 
     ggml_gemm_q4_K_8x8_q8_K(n, s, bs, vx, vy, nr, nc);
 }
 
-template <>
-void gemm<block_iq4_nl, 4, 4>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+template <> void gemm<block_iq4_nl, 4, 4>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
     ggml_gemm_iq4_nl_4x4_q8_0(n, s, bs, vx, vy, nr, nc);
 }
 
@@ -5335,17 +5333,17 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
     bool work_size(int /* n_threads */, const struct ggml_tensor * op, size_t & size) override {
         // not realy a GGML_TYPE_Q8_0 but same size.
         switch (op->op) {
-        case GGML_OP_MUL_MAT:
-            size = ggml_row_size(PARAM_TYPE, ggml_nelements(op->src[1]));
-            return true;
-        case GGML_OP_MUL_MAT_ID:
-            size = ggml_row_size(PARAM_TYPE, ggml_nelements(op->src[1]));
-            size = GGML_PAD(size, sizeof(int64_t));  // + padding for next bloc.
-            size += sizeof(int64_t) * (1+op->src[0]->ne[2]) * op->src[1]->ne[2];
-            return true;
-        default:
-            // GGML_ABORT("fatal error");
-            break;
+            case GGML_OP_MUL_MAT:
+                size = ggml_row_size(PARAM_TYPE, ggml_nelements(op->src[1]));
+                return true;
+            case GGML_OP_MUL_MAT_ID:
+                size = ggml_row_size(PARAM_TYPE, ggml_nelements(op->src[1]));
+                size = GGML_PAD(size, sizeof(int64_t));  // + padding for next bloc.
+                size += sizeof(int64_t) * (1+op->src[0]->ne[2]) * op->src[1]->ne[2];
+                return true;
+            default:
+                // GGML_ABORT("fatal error");
+                break;
         }
         return false;
     }
@@ -5399,12 +5397,13 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
         const ggml_from_float_t from_float = ggml_get_type_traits_cpu(PARAM_TYPE)->from_float;
 
         int64_t i11_processed = 0;
-        if(PARAM_TYPE == GGML_TYPE_Q8_K) {
+        if (PARAM_TYPE == GGML_TYPE_Q8_K) {
             for (int64_t i11 = ith * 4; i11 < ne11 - ne11 % 4; i11 += nth * 4) {
                 quantize_mat_q8_K((float *) ((char *) src1->data + i11 * nb11), (void *) (wdata + i11 * nbw1), 4, ne10,
                               INTER_SIZE);
             }
         } else {
+            GGML_ASSERT(PARAM_TYPE == GGML_TYPE_Q8_0);
             for (int64_t i11 = ith * 4; i11 < ne11 - ne11 % 4; i11 += nth * 4) {
                 quantize_mat_q8_0((float *) ((char *) src1->data + i11 * nb11), (void *) (wdata + i11 * nbw1), 4, ne10,
                                 INTER_SIZE);
@@ -5422,7 +5421,7 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
         int64_t      src0_start      = (ith * ne01) / nth;
         int64_t      src0_end        = ((ith + 1) * ne01) / nth;
         src0_start = (src0_start % NB_COLS) ? src0_start + NB_COLS - (src0_start % NB_COLS) : src0_start;
-        src0_end   = (src0_end % NB_COLS) ? src0_end + NB_COLS - (src0_end % NB_COLS) : src0_end;
+        src0_end   = (src0_end   % NB_COLS) ? src0_end   + NB_COLS - (src0_end   % NB_COLS) : src0_end;
         if (src0_start >= src0_end) {
             return;
         }
@@ -5452,7 +5451,7 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
         const int ith = params->ith;
         const int nth = params->nth;
 
-        const ggml_from_float_t from_float = ggml_get_type_traits_cpu(GGML_TYPE_Q8_0)->from_float;
+        const ggml_from_float_t from_float = ggml_get_type_traits_cpu(PARAM_TYPE)->from_float;
 
         // we don't support permuted src0 or src1
         GGML_ASSERT(nb00 == ggml_type_size(src0->type));
@@ -5474,7 +5473,7 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
         const int n_ids = ids->ne[0]; // n_expert_used
         const int n_as  = ne02;       // n_expert
 
-        const size_t nbw1 = ggml_row_size(GGML_TYPE_Q8_0, ne10);
+        const size_t nbw1 = ggml_row_size(PARAM_TYPE, ne10);
         const size_t nbw2 = nbw1*ne11;
         const size_t nbw3 = nbw2*ne12;
 
@@ -5486,12 +5485,13 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
         GGML_ASSERT(params->wsize >= (GGML_PAD(nbw3, sizeof(int64_t)) + n_as * sizeof(int64_t) +
                                       n_as * ne12 * sizeof(mmid_row_mapping)));
 
-        auto                      wdata             = (char *) params->wdata;
-        auto                      wdata_src1_end    = (char *) wdata + GGML_PAD(nbw3, sizeof(int64_t));
-        int64_t *                 matrix_row_counts = (int64_t *) (wdata_src1_end);                      // [n_as]
+        auto      wdata             = (char *) params->wdata;
+        auto      wdata_src1_end    = (char *) wdata + GGML_PAD(nbw3, sizeof(int64_t));
+        int64_t * matrix_row_counts = (int64_t *) (wdata_src1_end); // [n_as]
+
         struct mmid_row_mapping * matrix_rows = (struct mmid_row_mapping *) (matrix_row_counts + n_as);  // [n_as][ne12]
 
-        // src1: float32 => block_q8_0
+        // src1: float32 => param type
         for (int64_t i12 = 0; i12 < ne12; ++i12) {
             for (int64_t i11 = ith; i11 < ne11; i11 += nth) {
                 from_float((float *)((char *) src1->data + i12 * nb12 + i11 * nb11),
@@ -5537,21 +5537,22 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
 
             int64_t src0_cur_start = (ith * ne01) / nth;
             int64_t src0_cur_end   = ((ith + 1) * ne01) / nth;
-            src0_cur_start =
-                (src0_cur_start % NB_COLS) ? src0_cur_start + NB_COLS - (src0_cur_start % NB_COLS) : src0_cur_start;
-            src0_cur_end = (src0_cur_end % NB_COLS) ? src0_cur_end + NB_COLS - (src0_cur_end % NB_COLS) : src0_cur_end;
+
+            src0_cur_start = (src0_cur_start % NB_COLS) ? src0_cur_start + NB_COLS - (src0_cur_start % NB_COLS) : src0_cur_start;
+            src0_cur_end   = (src0_cur_end   % NB_COLS) ? src0_cur_end   + NB_COLS - (src0_cur_end   % NB_COLS) : src0_cur_end;
 
             if (src0_cur_start >= src0_cur_end) return;
 
             for (int ir1 = 0; ir1 < nr1; ir1++) {
                 struct mmid_row_mapping row_mapping = MMID_MATRIX_ROW(cur_a, ir1);
-                const int id       = row_mapping.i1; // selected expert index
 
-                const int64_t  i11 = id % ne11;
-                const int64_t  i12 = row_mapping.i2; // row index in src1
+                const int id = row_mapping.i1; // selected expert index
 
-                const int64_t  i1 = id;  // selected expert index
-                const int64_t  i2 = i12; // row
+                const int64_t i11 = id % ne11;
+                const int64_t i12 = row_mapping.i2; // row index in src1
+
+                const int64_t i1 = id;  // selected expert index
+                const int64_t i2 = i12; // row
 
                 auto src1_col = (const char *) wdata + (i11 * nbw1 + i12 * nbw2);
 
@@ -5578,7 +5579,7 @@ static const tensor_traits<block_q4_0, 8, 8, GGML_TYPE_Q8_0> q4_0_8x8_q8_0;
 static const tensor_traits<block_q4_K, 8, 8, GGML_TYPE_Q8_K> q4_K_8x8_q8_K;
 
 // instance for IQ4
-static const tensor_traits<block_iq4_nl, 4, 4, GGML_TYPE_IQ4_NL> iq4_nl_4x4_q8_0;
+static const tensor_traits<block_iq4_nl, 4, 4, GGML_TYPE_Q8_0> iq4_nl_4x4_q8_0;
 
 }  // namespace ggml::cpu::aarch64
 
