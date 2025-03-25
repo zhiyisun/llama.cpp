@@ -3,7 +3,7 @@
 
 // kernel parameters for mat-vec threadgroups
 //
-// N_R0: number of src0 rows to process per threadgroup
+// N_R0: number of src0 rows to process per simdgroup
 // N_SG: number of simdgroups per threadgroup
 //
 // TODO: for optimal performance, become function of the device and work size

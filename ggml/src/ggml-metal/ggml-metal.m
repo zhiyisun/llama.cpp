@@ -2883,7 +2883,7 @@ static void ggml_metal_encode_node(
                     id<MTLComputePipelineState> pipeline = nil;
 
                     int nsg = 0; // number of simdgroups
-                    int nr0 = 0; // number of src0 rows per threadgroup
+                    int nr0 = 0; // number of src0 rows per simdgroup
                     int nr1 = 1; // number of src1 rows per threadgroup
 
                     size_t smem = 0; // shared memory
