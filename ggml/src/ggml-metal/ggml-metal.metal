@@ -4311,7 +4311,7 @@ kernel void kernel_cpy_f32_iq4_nl(
         float amax = 0.0f; // absolute max
         float max  = 0.0f;
 
-        for (int j = 0; j < QK4_0; j++) {
+        for (int j = 0; j < QK4_NL; j++) {
             const float v = src[j];
             if (amax < fabs(v)) {
                 amax = fabs(v);
@@ -4555,12 +4555,12 @@ void kernel_mul_mv_q3_K_f32_impl(
     //const uint16_t kmask1 = 0x3030;
     //const uint16_t kmask2 = 0x0f0f;
 
-    const int tid = tiisg/4;
-    const int ix  = tiisg%4;
-    const int ip  = tid/4;          // 0 or 1
-    const int il  = 2*((tid%4)/2);  // 0 or 2
-    const int ir  = tid%2;
-    const int l0  = 8*ir;
+    const short tid = tiisg/4;
+    const short ix  = tiisg%4;
+    const short ip  = tid/4;          // 0 or 1
+    const short il  = 2*((tid%4)/2);  // 0 or 2
+    const short ir  = tid%2;
+    const short l0  = 8*ir;
 
     // One would think that the Metal compiler would figure out that ip and il can only have
     // 4 possible states, and optimize accordingly. Well, no. It needs help, and we do it
@@ -4585,8 +4585,8 @@ void kernel_mul_mv_q3_K_f32_impl(
     const uint16_t s_shift1 = 4*ip;
     const uint16_t s_shift2 = s_shift1 + il;
 
-    const int q_offset = 32*ip + l0;
-    const int y_offset = 128*ip + 32*il + l0;
+    const short q_offset = 32*ip + l0;
+    const short y_offset = 128*ip + 32*il + l0;
 
     device const float * y1 = yy + ix*QK_K + y_offset;
 
