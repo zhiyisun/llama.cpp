@@ -312,14 +312,8 @@ GGML_API void ggml_aligned_free(void * ptr, size_t size);
 // FP16 to FP32 conversion
 
 #if defined(__ARM_NEON)
-    #if defined(_MSC_VER) || (defined(__CUDACC__) && __CUDACC_VER_MAJOR__ <= 11)
-        typedef uint16_t ggml_fp16_internal_t;
-    #else
-        typedef __fp16 ggml_fp16_internal_t;
-    #endif
-#endif
+    typedef __fp16 ggml_fp16_internal_t;
 
-#if defined(__ARM_NEON) && !defined(_MSC_VER) && !(defined(__CUDACC__) && __CUDACC_VER_MAJOR__ <= 11)
     #define GGML_COMPUTE_FP16_TO_FP32(x) ggml_compute_fp16_to_fp32(x)
     #define GGML_COMPUTE_FP32_TO_FP16(x) ggml_compute_fp32_to_fp16(x)
 
@@ -485,7 +479,7 @@ GGML_API void ggml_aligned_free(void * ptr, size_t size);
     #define GGML_COMPUTE_FP16_TO_FP32(x) ggml_compute_fp16_to_fp32(x)
     #define GGML_COMPUTE_FP32_TO_FP16(x) ggml_compute_fp32_to_fp16(x)
 
-#endif // defined(__ARM_NEON) && (!defined(__MSC_VER)
+#endif // defined(__ARM_NEON)
 
 // precomputed f32 table for f16 (256 KB)
 // defined in ggml.c, initialized in ggml_init()
