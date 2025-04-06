@@ -98,11 +98,11 @@ layout (constant_id = 12) const uint LOAD_VEC_B_SHIFT = 0;
 #ifdef COOPMAT
 #define SHMEM_STRIDE (BK + 8)
 #else
-#define SHMEM_STRIDE (BK + 1)
+#define SHMEM_STRIDE (BK / 2 + 1)
 #endif
 
-shared FLOAT_TYPE buf_a[BM * SHMEM_STRIDE];
-shared FLOAT_TYPE buf_b[BN * SHMEM_STRIDE];
+shared FLOAT_TYPE_VEC2 buf_a[BM * SHMEM_STRIDE];
+shared FLOAT_TYPE_VEC2 buf_b[BN * SHMEM_STRIDE];
 
 #ifdef MUL_MAT_ID
 shared u16vec2 row_ids[3072];
@@ -223,8 +223,8 @@ void main() {
     }
 #else
     ACC_TYPE sums[WMITER * TM * WNITER * TN];
-    FLOAT_TYPE cache_a[WMITER * TM];
-    FLOAT_TYPE cache_b[TN];
+    FLOAT_TYPE_VEC2 cache_a[WMITER * TM];
+    FLOAT_TYPE_VEC2 cache_b[TN];
 
     [[unroll]] for (uint i = 0; i < WMITER*TM*WNITER*TN; i++) {
         sums[i] = ACC_TYPE(0.0f);
@@ -262,7 +262,7 @@ void main() {
             }
         }
 #else
-        [[unroll]] for (uint i = 0; i < BK; i++) {
+        [[unroll]] for (uint i = 0; i < BK / 2; i++) {
             // Load from shared into cache
             [[unroll]] for (uint wsir = 0; wsir < WMITER; wsir++) {
                 [[unroll]] for (uint j = 0; j < TM; j++) {
@@ -278,7 +278,7 @@ void main() {
                     [[unroll]] for (uint cc = 0; cc < TN; cc++) {
                         [[unroll]] for (uint cr = 0; cr < TM; cr++) {
                             const uint sums_idx = (wsic * TN + cc) * (WMITER * TM) + wsir * TM + cr;
-                            sums[sums_idx] = fma(ACC_TYPE(cache_a[wsir * TM + cr]), ACC_TYPE(cache_b[cc]), sums[sums_idx]);
+                            sums[sums_idx] += dot(ACC_TYPE_VEC2(cache_a[wsir * TM + cr]), ACC_TYPE_VEC2(cache_b[cc]));
                         }
                     }
                 }

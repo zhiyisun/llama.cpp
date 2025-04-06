@@ -293,10 +293,10 @@ void string_to_spv(const std::string& _name, const std::string& in_fname, const 
 void matmul_shaders(bool fp16, bool matmul_id, bool coopmat, bool coopmat2, bool f16acc) {
     std::string load_vec = coopmat2 ? "1" : fp16 ? "8" : "4";
 
-    std::map<std::string, std::string> base_dict = {
-        {"FLOAT_TYPE", (coopmat2 || fp16) ? "float16_t" : "float"},
-        {"FLOAT_TYPE_VEC2", (coopmat2 || fp16) ? "f16vec2" : "vec2"},
-    };
+    std::map<std::string, std::string> base_dict = {{"FLOAT_TYPE",      (coopmat2 || fp16) ? "float16_t" : "float" },
+                                                    {"FLOAT_TYPE_VEC2", (coopmat2 || fp16) ? "f16vec2"   : "vec2"  },
+                                                    {"FLOAT_TYPE_VEC4", (coopmat2 || fp16) ? "f16vec4"   : "vec4"  },
+                                                    {"FLOAT_TYPE_VEC8", (coopmat2 || fp16) ? "f16mat2x4" : "mat2x4"}};
     std::string shader_name = "matmul";
 
     if (matmul_id) {
@@ -308,7 +308,8 @@ void matmul_shaders(bool fp16, bool matmul_id, bool coopmat, bool coopmat2, bool
         base_dict["FLOAT16"] = "1";
     }
 
-    base_dict["ACC_TYPE"] = f16acc ? "float16_t" : "float";
+    base_dict["ACC_TYPE"     ] = f16acc ? "float16_t" : "float";
+    base_dict["ACC_TYPE_VEC2"] = f16acc ? "f16vec2"   : "vec2";
 
     if (coopmat) {
         base_dict["COOPMAT"] = "1";
@@ -386,6 +387,7 @@ void process_shaders() {
     // flash attention
     for (const auto& f16acc : {false, true}) {
         std::string acctype = f16acc ? "float16_t" : "float";
+        std::string acctype_vec2 = f16acc ? "f16vec2" : "vec2";
 
         for (const auto& tname : type_names) {
             if (tname == "f32") {
