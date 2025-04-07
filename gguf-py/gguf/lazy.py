@@ -142,6 +142,7 @@ class LazyBase(ABC, metaclass=LazyMeta):
             elif isinstance(res, tuple) and all(isinstance(t, cls._tensor_type) for t in res):
                 # share the evaluation between lazy tuple elements
                 shared_args: list = [args, None]
+
                 def eager_tuple_element(a: list[Any], i: int = 0, /, **kw) -> LazyBase:
                     assert len(a) == 2
                     if a[1] is None:
