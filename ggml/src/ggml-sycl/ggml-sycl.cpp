@@ -372,6 +372,7 @@ static void ggml_backend_sycl_buffer_set_tensor(ggml_backend_buffer_t buffer,
     auto stream = &(dpct::dev_mgr::instance().get_device(ctx->device).default_queue());
     SYCL_CHECK(
         CHECK_TRY_ERROR(dpct::dev_mgr::instance().get_device(ctx->device).queues_wait_and_throw()));
+    //note: use host buffer to save the data from mmap(), then copy to device. It's workaround for mmap() issue on PVC GPU.
     char* host_buf = (char*)malloc(size);
     memcpy(host_buf, data, size);
     SYCL_CHECK(
