@@ -8,6 +8,9 @@
 #include <string>
 #include <unordered_map>
 #include <map>
+#include <fstream>
+#include <cmath>
+#include <cctype>
 
 struct quant_option {
     std::string name;

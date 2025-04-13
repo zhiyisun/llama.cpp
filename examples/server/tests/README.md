@@ -17,7 +17,7 @@ To mitigate it, you can increase values in `n_predict`, `kv_size`.
 
 ```shell
 cd ../../..
-cmake -B build -DLLAMA_CURL=ON
+cmake -B build
 cmake --build build --target llama-server
 ```
 
@@ -48,7 +48,7 @@ DEBUG=1 ./tests.sh -s -v -x
 To run all the tests in a file:
 
 ```shell
-./tests.sh unit/test_chat_completion.py.py -v -x
+./tests.sh unit/test_chat_completion.py -v -x
 ```
 
 To run a single test:
