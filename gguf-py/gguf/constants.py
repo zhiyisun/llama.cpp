@@ -219,7 +219,7 @@ class Keys:
     class IMatrix:
         CHUNK_COUNT = "imatrix.chunk_count"
         CHUNK_SIZE  = "imatrix.chunk_size"
-        DATASET     = "imatrix.dataset"
+        DATASETS    = "imatrix.datasets"
 
 
 #
