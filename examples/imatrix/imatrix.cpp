@@ -154,7 +154,7 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
             exit(1); //GGML_ABORT("fatal error");
         }
         else if (e.counts.size() != (size_t)n_as) {
-            LOG_ERR("Oops: inconsistent expert count for %s (%d vs %d)\n", wname.c_str(), (int)e.counts.size(), (int)n_as);
+            LOG_ERR("%s: inconsistent expert count for %s (%d vs %d)\n", __func__, wname.c_str(), (int)e.counts.size(), (int)n_as);
             exit(1); //GGML_ABORT("fatal error");
         }
         LOG_DBGV(2, "%s[%d]: %32s, %s, %5d x %5d, %d\n", __func__, m_last_chunk, wname.c_str(), ggml_op_name(t->op), (int)src1->ne[0], (int)src1->ne[2], (int)src1->type);
@@ -208,7 +208,7 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
             exit(1); //GGML_ABORT("fatal error");
         }
         else if (e.counts.size() != 1) {
-            LOG_ERR("Oops: inconsistent expert count for %s (%d vs %d)\n", wname.c_str(), (int)e.counts.size(), 1);
+            LOG_ERR("%s: inconsistent expert count for %s (%d vs %d)\n", __func__, wname.c_str(), (int)e.counts.size(), 1);
             exit(1); //GGML_ABORT("fatal error");
         }
         LOG_DBGV(2, "%s[%d]: %32s, %s, %5d x %5d, %d\n", __func__, m_last_chunk, wname.c_str(), ggml_op_name(t->op), (int)src1->ne[0], (int)src1->ne[1], (int)src1->type);
@@ -819,7 +819,7 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
                     //       (not possible when this skips FFN computation of the last layer)
                     common_batch_add(batch, tokens[seq_start + k], j*n_batch + k, { seq }, true);
                 }
-  
+
                 // restore the original token in case it was set to BOS
                 tokens[seq_start] = token_org;
             }
@@ -896,7 +896,7 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
 int main(int argc, char ** argv) {
     common_params params;
 
-    params.out_file = "imatrix.gguf" ;
+    params.out_file = "imatrix.gguf";
 
     params.n_ctx = 512;
     params.logits_all = true;
