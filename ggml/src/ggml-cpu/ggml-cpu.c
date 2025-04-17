@@ -2427,19 +2427,21 @@ static bool ggml_thread_apply_priority(int32_t prio) {
 
     if (prio != GGML_SCHED_PRIO_LOW) {
         // Tell Windows that this thread should not be throttled (needs its own CPU core).
-        // Newer Windows 11 ARM64 versions aggresively park (offline) CPU cores and often place
+        // Newer Windows 11 versions aggresively park (offline) CPU cores and often place
         // all our threads onto the first 4 cores which results in terrible performance with
         // n_threads > 4
-        THREAD_POWER_THROTTLING_STATE p;
-        ZeroMemory(&p, sizeof(p));
-        p.Version     = THREAD_POWER_THROTTLING_CURRENT_VERSION;
-        p.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
-        p.StateMask   = 0;
+        #if _WIN32_WINNT >= 0x0602
+        THREAD_POWER_THROTTLING_STATE t;
+        ZeroMemory(&t, sizeof(t));
+        t.Version     = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+        t.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+        t.StateMask   = 0;
 
-        if (!SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &p, sizeof(p))) {
+        if (!SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &t, sizeof(t))) {
             GGML_LOG_DEBUG("failed to disable thread power throttling %d : (%d)\n", prio, (int) GetLastError());
             return false;
         }
+        #endif
     }
 
     if (prio == GGML_SCHED_PRIO_NORMAL) {
