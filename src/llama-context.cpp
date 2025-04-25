@@ -1957,8 +1957,6 @@ void llama_context::opt_epoch_iter(
 
             n_outputs = ubatch.n_tokens;
 
-            printf("ubatch.n_tokens = %d\n", ubatch.n_tokens);
-
             // TODO: not sure if this is needed
             if (!kv_self->find_slot(ubatch)) {
                 LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
