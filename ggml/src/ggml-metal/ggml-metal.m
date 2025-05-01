@@ -2652,27 +2652,27 @@ static bool ggml_metal_encode_node(
                 }
 
                 ggml_metal_kargs_ssm_scan args = {
-                    /*.d_state      =*/ d_state;
-                    /*.d_inner      =*/ d_inner;
-                    /*.n_head       =*/ n_head;
-                    /*.n_group      =*/ n_group;
-                    /*.n_seq_tokens =*/ n_seq_tokens;
-                    /*.n_seqs       =*/ n_seqs;
-                    /*.nb01         =*/ nb01;
-                    /*.nb02         =*/ nb02;
-                    /*.nb03         =*/ nb03;
-                    /*.nb11         =*/ nb11;
-                    /*.nb12         =*/ nb12;
-                    /*.nb13         =*/ nb13;
-                    /*.nb21         =*/ nb21;
-                    /*.nb22         =*/ nb22;
-                    /*.nb31         =*/ nb31;
-                    /*.nb41         =*/ nb41;
-                    /*.nb42         =*/ nb42;
-                    /*.nb43         =*/ nb43;
-                    /*.nb51         =*/ nb51;
-                    /*.nb52         =*/ nb52;
-                    /*.nb53         =*/ nb53;
+                    /*.d_state      =*/ d_state,
+                    /*.d_inner      =*/ d_inner,
+                    /*.n_head       =*/ n_head,
+                    /*.n_group      =*/ n_group,
+                    /*.n_seq_tokens =*/ n_seq_tokens,
+                    /*.n_seqs       =*/ n_seqs,
+                    /*.nb01         =*/ nb01,
+                    /*.nb02         =*/ nb02,
+                    /*.nb03         =*/ nb03,
+                    /*.nb11         =*/ nb11,
+                    /*.nb12         =*/ nb12,
+                    /*.nb13         =*/ nb13,
+                    /*.nb21         =*/ nb21,
+                    /*.nb22         =*/ nb22,
+                    /*.nb31         =*/ nb31,
+                    /*.nb41         =*/ nb41,
+                    /*.nb42         =*/ nb42,
+                    /*.nb43         =*/ nb43,
+                    /*.nb51         =*/ nb51,
+                    /*.nb52         =*/ nb52,
+                    /*.nb53         =*/ nb53,
                 };
 
                 [encoder setComputePipelineState:pipeline];
