@@ -286,27 +286,21 @@ void llm_graph_input_s_copy::set_input(const llama_ubatch * ubatch) {
         for (uint32_t i = 0; i < n_kv; ++i) {
             const uint32_t  cell_id = i + kv_self->head;
 
-            //////////////////////////////////////////////
-            // TODO: this should not mutate the KV cache !
-            llama_kv_cell & kv_cell = const_cast<class llama_kv_cache_unified *>(kv_self)->cells[i];
+            const llama_kv_cell & kv_cell = kv_self->cells[cell_id];
+
+            int32_t src = kv_cell.src0;
 
             // prevent out-of-bound sources
-            if (kv_cell.src < 0) {
+            if (src < 0) {
                 GGML_ASSERT(kv_self->rs_z >= 0); // Need a valid zero-ed cell as a source
-                kv_cell.src = kv_self->rs_z;
+                src = kv_self->rs_z;
             }
-            if ((uint32_t) kv_cell.src >= kv_self->size) {
+            if ((uint32_t) src >= kv_self->size) {
                 // ignore out-of-bound sources
-                kv_cell.src = cell_id;
+                src = cell_id;
             }
 
-            data[i] = kv_cell.src;
-
-            // TODO: do not mutate the KV cache
-            // ensure copy only happens once
-            if (kv_cell.src != (int32_t) cell_id) {
-                kv_cell.src = cell_id;
-            }
+            data[i] = src;
         }
     }
 }

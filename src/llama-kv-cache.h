@@ -47,6 +47,7 @@ struct llama_kv_cell {
     llama_pos pos   = -1;
     llama_pos delta =  0;
     int32_t   src   = -1; // used by recurrent state models to copy states
+    int32_t   src0  = -1; // like src, but used when setting the inputs (allowing to copy once)
     int32_t   tail  = -1;
 
     std::set<llama_seq_id> seq_id;
