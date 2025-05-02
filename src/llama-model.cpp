@@ -9009,7 +9009,7 @@ struct llm_build_mamba : public llm_graph_context {
             ggml_tensor * C = ggml_view_4d(ctx0, xBC, d_state, n_group, n_seq_tokens, n_seqs, d_state*xBC->nb[0], xBC->nb[1], xBC->nb[2], (d_inner + n_group*d_state)*ggml_element_size(xBC));
 
             // {n_head, n_seq_tokens, n_seqs}
-            dt = ggml_add(ctx0, dt, model.layers[il].ssm_dt_b);
+            dt = ggml_add(ctx0, ggml_cont(ctx0, dt), model.layers[il].ssm_dt_b);
 
             ggml_tensor * ssm_ids = ggml_view_1d(ctx0, state_copy, n_seqs, 0);
             // TODO: use semistructured matrices to implement state-space duality
