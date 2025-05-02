@@ -286,7 +286,7 @@ void llm_graph_input_s_copy::set_input(const llama_ubatch * ubatch) {
         for (uint32_t i = 0; i < n_kv; ++i) {
             const uint32_t  cell_id = i + kv_self->head;
 
-            const llama_kv_cell & kv_cell = kv_self->cells[cell_id];
+            const auto & kv_cell = kv_self->cells[cell_id];
 
             int32_t src = kv_cell.src0;
 
@@ -1077,7 +1077,7 @@ ggml_tensor * llm_graph_context::build_inp_cls() const {
 }
 
 ggml_tensor * llm_graph_context::build_inp_s_copy() const {
-    const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
+    const llama_kv_cache_recurrent * kv_self = static_cast<const llama_kv_cache_recurrent *>(memory);
 
     auto inp = std::make_unique<llm_graph_input_s_copy>(kv_self);
 
@@ -1391,8 +1391,6 @@ ggml_tensor * llm_graph_context::build_attn(
 
     // store to KV cache
     {
-        GGML_ASSERT(!kv_self->recurrent);
-
         const auto kv_head = kv_self->head;
 
         GGML_ASSERT(kv_self->size == n_ctx);
@@ -1542,7 +1540,7 @@ ggml_tensor * llm_graph_context::build_recurrent_state(
              int32_t   n_state,
              int32_t   n_seqs,
                 bool   avoid_copies) const {
-    const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
+    const llama_kv_cache_recurrent * kv_self = static_cast<const llama_kv_cache_recurrent *>(memory);
 
     const auto n_kv    = kv_self->n;
     const auto kv_head = kv_self->head;
@@ -1579,7 +1577,7 @@ ggml_tensor * llm_graph_context::build_rwkv_token_shift_load(
          ggml_tensor * state_copy,
   const llama_ubatch & ubatch,
                  int   il) const {
-    const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
+    const llama_kv_cache_recurrent * kv_self = static_cast<const llama_kv_cache_recurrent *>(memory);
 
     const auto token_shift_count = hparams.token_shift_count;
 
@@ -1600,7 +1598,7 @@ ggml_tensor * llm_graph_context::build_rwkv_token_shift_store(
          ggml_tensor * token_shift,
   const llama_ubatch & ubatch,
                  int   il) const {
-    const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
+    const llama_kv_cache_recurrent * kv_self = static_cast<const llama_kv_cache_recurrent *>(memory);
 
     const auto token_shift_count = hparams.token_shift_count;
     const auto n_embd = hparams.n_embd;
