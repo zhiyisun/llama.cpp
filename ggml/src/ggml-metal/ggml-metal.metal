@@ -6305,34 +6305,34 @@ kernel void kernel_mul_mm(
         }
     } else {
         // block is smaller than 64x32, we should avoid writing data outside of the matrix
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        threadgroup float * temp_str = ((threadgroup float *) shmem) \
-                                     + 32*(sgitg&1) + (16*(sgitg >> 1))*BLOCK_SIZE_M;
-        for (short i = 0; i < 8; i++) {
-            simdgroup_store(mc[i], temp_str + 8*(i%4) + 8*BLOCK_SIZE_M*(i/4), BLOCK_SIZE_M);
-        }
+        //threadgroup_barrier(mem_flags::mem_threadgroup);
+        //threadgroup float * temp_str = ((threadgroup float *) shmem) \
+        //                             + 32*(sgitg&1) + (16*(sgitg >> 1))*BLOCK_SIZE_M;
+        //for (short i = 0; i < 8; i++) {
+        //    simdgroup_store(mc[i], temp_str + 8*(i%4) + 8*BLOCK_SIZE_M*(i/4), BLOCK_SIZE_M);
+        //}
 
-        threadgroup_barrier(mem_flags::mem_threadgroup);
+        //threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        if (sgitg == 0) {
-            for (int j = tiitg; j < n_cols; j += BLOCK_SIZE_N) {
-                device float  * D  = (device float  *) dst + (r0*BLOCK_SIZE_M) + (r1*BLOCK_SIZE_N + j)*args.ne0 + im*args.ne1*args.ne0;
-                device float4 * D4 = (device float4 *) D;
+        //if (sgitg == 0) {
+        //    for (int j = tiitg; j < n_cols; j += BLOCK_SIZE_N) {
+        //        device float  * D  = (device float  *) dst + (r0*BLOCK_SIZE_M) + (r1*BLOCK_SIZE_N + j)*args.ne0 + im*args.ne1*args.ne0;
+        //        device float4 * D4 = (device float4 *) D;
 
-                threadgroup float  * C  = temp_str + (j*BLOCK_SIZE_M);
-                threadgroup float4 * C4 = (threadgroup float4 *) C;
+        //        threadgroup float  * C  = temp_str + (j*BLOCK_SIZE_M);
+        //        threadgroup float4 * C4 = (threadgroup float4 *) C;
 
-                int i = 0;
-                for (; i < n_rows/4; i++) {
-                    *(D4 + i) = *(C4 + i);
-                }
+        //        int i = 0;
+        //        for (; i < n_rows/4; i++) {
+        //            *(D4 + i) = *(C4 + i);
+        //        }
 
-                i *= 4;
-                for (; i < n_rows; i++) {
-                    *(D + i) = *(C + i);
-                }
-            }
-        }
+        //        i *= 4;
+        //        for (; i < n_rows; i++) {
+        //            *(D + i) = *(C + i);
+        //        }
+        //    }
+        //}
     }
 }
 

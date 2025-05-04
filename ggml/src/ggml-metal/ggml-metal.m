@@ -2443,7 +2443,7 @@ static bool ggml_metal_encode_node(
 #if 0
                 // cpy to tmp buffer in MTLHeap
 
-                id<MTLBuffer> h_src0 = h_src0 = ggml_metal_mem_pool_alloc(mem_pool, ggml_nbytes(src0));
+                id<MTLBuffer> h_src0 = ggml_metal_mem_pool_alloc(mem_pool, ggml_nbytes(src0));
                 if (!h_src0) {
                     GGML_LOG_ERROR("%s: failed to allocate buffer from memory pool, size = %zu\n", __func__, ggml_nbytes(src0));
                     return false;
@@ -2947,6 +2947,12 @@ static bool ggml_metal_encode_node(
                         default: break;
                     }
 
+                    id<MTLBuffer> h_dst = ggml_metal_mem_pool_alloc(mem_pool, sizeof(float)*GGML_PAD(ne01, 64)*GGML_PAD(ne11, 32)*ne12*ne13);
+                    if (!h_dst) {
+                        GGML_LOG_ERROR("%s: failed to allocate buffer from memory pool, size = %zu\n", __func__, ggml_nbytes(src0));
+                        return false;
+                    }
+
                     id<MTLComputePipelineState> pipeline = nil;
 
                     switch (src0->type) {
@@ -2986,8 +2992,8 @@ static bool ggml_metal_encode_node(
                         /*.nb11 =*/ nb11,
                         /*.nb12 =*/ nb12,
                         /*.nb13 =*/ nb13,
-                        /*.ne0  =*/ ne0,
-                        /*.ne1  =*/ ne1,
+                        /*.ne0  =*/ GGML_PAD(ne01, 64),
+                        /*.ne1  =*/ GGML_PAD(ne11, 32),
                         /*.r2   =*/ r2,
                         /*.r3   =*/ r3,
                     };
@@ -2996,10 +3002,40 @@ static bool ggml_metal_encode_node(
                     [encoder setBytes:&args    length:sizeof(args) atIndex:0];
                     [encoder setBuffer:id_src0 offset:offs_src0    atIndex:1];
                     [encoder setBuffer:id_src1 offset:offs_src1    atIndex:2];
-                    [encoder setBuffer:id_dst  offset:offs_dst     atIndex:3];
+                  //[encoder setBuffer:id_dst  offset:offs_dst     atIndex:3];
+                    [encoder setBuffer:h_dst   offset:0            atIndex:3];
 
                     [encoder setThreadgroupMemoryLength:8192 atIndex:0];
                     [encoder dispatchThreadgroups:MTLSizeMake( (ne11 + 31)/32, (ne01 + 63)/64, ne12*ne13) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+
+                    ggml_metal_kargs_cpy args_cpy = {
+                        /*.ne00 =*/ ne0,
+                        /*.ne01 =*/ ne1,
+                        /*.ne02 =*/ ne2,
+                        /*.ne03 =*/ ne3,
+                        /*.nb00 =*/ nb0,
+                        /*.nb01 =*/ nb0*GGML_PAD(ne01, 64),
+                        /*.nb02 =*/ nb0*GGML_PAD(ne01, 64)*GGML_PAD(ne11, 32),
+                        /*.nb03 =*/ nb0*GGML_PAD(ne01, 64)*GGML_PAD(ne11, 32)*ne12,
+                        /*.ne0  =*/ ne0,
+                        /*.ne1  =*/ ne1,
+                        /*.ne2  =*/ ne2,
+                        /*.ne3  =*/ ne3,
+                        /*.nb0  =*/ nb0,
+                        /*.nb1  =*/ nb1,
+                        /*.nb2  =*/ nb2,
+                        /*.nb3  =*/ nb3,
+                    };
+
+                    [encoder setComputePipelineState:ctx->kernels[GGML_METAL_KERNEL_TYPE_CPY_F32_F32].pipeline];
+
+                    [encoder setBytes:&args_cpy length:sizeof(args_cpy) atIndex:0];
+                    [encoder setBuffer:h_dst  offset:0                  atIndex:1];
+                    [encoder setBuffer:id_dst offset:offs_dst           atIndex:2];
+
+                    const int nth_cpy = MIN(1024, ne0);
+
+                    [encoder dispatchThreadgroups:MTLSizeMake(ne1, ne2, ne3) threadsPerThreadgroup:MTLSizeMake(nth_cpy, 1, 1)];
                 } else {
                     id<MTLComputePipelineState> pipeline = nil;
 
