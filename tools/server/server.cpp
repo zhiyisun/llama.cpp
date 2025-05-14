@@ -4368,7 +4368,7 @@ int main(int argc, char ** argv) {
 
     const auto handle_models = [&params, &ctx_server, &state, &res_ok](const httplib::Request &, httplib::Response & res) {
         server_state current_state = state.load();
-        std::string model_meta;
+        json model_meta = nullptr;
         if (current_state == SERVER_STATE_READY) {
             model_meta = ctx_server.model_meta();
         }
