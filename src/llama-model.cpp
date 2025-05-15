@@ -215,7 +215,7 @@ static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w
                 const int64_t d_state      = w->ne[0] == 1 ? hparams.ssm_d_state : w->ne[0];
                 const int64_t n_head       = w->ne[1];
                 const int64_t head_dim     = hparams.ssm_d_inner / n_head;
-                const int64_t n_group      = hparams.ssm_n_group;
+                const int64_t n_group      = hparams.ssm_n_group ? hparams.ssm_n_group : 1;
                 const int64_t n_seq_tokens = 512;
                 const int64_t n_seqs       = 3;
                 ggml_tensor * s   = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, d_state, head_dim, n_head, n_seqs);
