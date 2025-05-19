@@ -732,10 +732,12 @@ int llama_context::encode(llama_batch & inp_batch) {
 
     const auto causal_attn_org = cparams.causal_attn;
 
-    // always use non-causal attention for encoder graphs
-    // TODO: this is a tmp solution until we have a proper way to support enc-dec models
-    //       ref: https://github.com/ggml-org/llama.cpp/pull/12181#issuecomment-2730451223
-    cparams.causal_attn = false;
+    if (model.arch == LLM_ARCH_T5) {
+        // always use non-causal attention for encoder graphs
+        // TODO: this is a tmp solution until we have a proper way to support enc-dec models
+        //       ref: https://github.com/ggml-org/llama.cpp/pull/12181#issuecomment-2730451223
+        cparams.causal_attn = false;
+    }
 
     auto * gf = graph_init();
     auto res = graph_build(ctx_compute.get(), gf, ubatch, LLM_GRAPH_TYPE_ENCODER);
