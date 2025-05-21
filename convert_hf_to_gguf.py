@@ -802,6 +802,9 @@ class TextModel(ModelBase):
         if chkhsh == "d5f1dd6f980fec569fb218a81a7658ac45fc56b38c5a0adeb1c232fbe04ef5ec":
             # ref: https://huggingface.co/ByteDance-Seed/Seed-Coder-8B-Base
             res = "seed-coder"
+        if chkhsh == "a81863d07e75497e2194eb1a1574d5e5cd4d5f85a87a0728b922bf2bed6fb327":
+            # ref: https://huggingface.co/jinaai/jina-embeddings-v3
+            res = "jina-v3"
 
         if res is None:
             logger.warning("\n")
@@ -3829,12 +3832,24 @@ class NomicBertModel(BertModel):
 class XLMRobertaModel(BertModel):
     model_arch = gguf.MODEL_ARCH.BERT
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._xlmroberta_tokenizer_init()
+    def __init__(self, dir_model: Path, ftype: gguf.LlamaFileType, fname_out: Path, **kwargs: Any):
+        hparams = kwargs.pop("hparams", None)
+        if hparams is None:
+            hparams = ModelBase.load_hparams(dir_model)
+
+        if hparams.get("lora_adaptations"):
+            self.model_arch = gguf.MODEL_ARCH.JINA_BERT_V3
+
+        super().__init__(dir_model, ftype, fname_out, hparams=hparams, **kwargs)
+
+        self._tokenizer_is_xlmroberta = False if self.model_arch == gguf.MODEL_ARCH.JINA_BERT_V3 else True
+        if self._tokenizer_is_xlmroberta:
+            self._xlmroberta_tokenizer_init()
 
     def set_vocab(self):
-        self._xlmroberta_set_vocab()
+        if self._tokenizer_is_xlmroberta:
+            return self._xlmroberta_set_vocab()
+        return super().set_vocab()
 
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
         # if name starts with "roberta.", remove the prefix
@@ -3842,12 +3857,33 @@ class XLMRobertaModel(BertModel):
         if name.startswith("roberta."):
             name = name[8:]
 
+        # jina-embeddings-v3
+        if ".parametrizations." in name:
+            name = name.replace(".parametrizations.", ".")
+            if name.endswith(".original"):
+                name = name[:-9]
+
         # position embeddings start at pad_token_id + 1, so just chop down the weight tensor
         if name == "embeddings.position_embeddings.weight":
             if self._position_offset is not None:
                 data_torch = data_torch[self._position_offset:,:]
 
+        if name.endswith(".lora_A"):
+            # TODO: convert loras
+            return []
+
+        if name.endswith(".lora_B"):
+            # TODO: convert loras
+            return []
+
         return super().modify_tensors(data_torch, name, bid)
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+
+        # jina-embeddings-v3
+        if rotary_emb_base := self.hparams.get("rotary_emb_base"):
+            self.gguf_writer.add_rope_freq_base(rotary_emb_base)
 
 
 @ModelBase.register("GemmaForCausalLM")
