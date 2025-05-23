@@ -3689,7 +3689,7 @@ class BertModel(TextModel):
         else:
             added_vocab = tokenizer.get_added_vocab()
             unk_token = tokenizer_config_json.get("unk_token")
-            unk_token_id = added_vocab.get(unk_token, 3)
+            unk_token_id = added_vocab.get(unk_token, tokenizer_json["model"].get("unk_id", 3))
 
             for token_id in range(vocab_size):
                 piece = tokenizer._convert_id_to_token(token_id)
