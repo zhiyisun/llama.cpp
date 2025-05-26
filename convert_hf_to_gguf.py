@@ -3668,7 +3668,7 @@ class BertModel(TextModel):
         toktypes: list[int] = [SentencePieceTokenTypes.UNUSED] * vocab_size
 
         if isinstance(tokenizer, SentencePieceProcessor):
-            for token_id in range(vocab_size):
+            for token_id in range(tokenizer.vocab_size()):
                 piece = tokenizer.IdToPiece(token_id)
                 text = piece.encode("utf-8")
                 score = tokenizer.GetScore(token_id)
