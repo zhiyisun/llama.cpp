@@ -109,7 +109,7 @@ static void test_min_p(const std::vector<float> & probs, const std::vector<float
     sampler_tester tester(probs, probs_expected);
 
     DUMP(&tester.cur_p);
-    tester.apply(llama_sampler_init_min_p(p, 1));
+    tester.apply(llama_sampler_init_min_p(p, 0));
     tester.apply(llama_sampler_init_dist (0));
     DUMP(&tester.cur_p);
 
@@ -332,6 +332,7 @@ int main(void) {
     test_min_p({0.1f, 0.2f, 0.3f, 0.4f}, {0.4f/0.7f, 0.3f/0.7f},                       0.74f);
     test_min_p({0.1f, 0.2f, 0.3f, 0.4f}, {0.4f/0.4f},                                  0.76f);
     test_min_p({0.1f, 0.2f, 0.3f, 0.4f}, {0.4f/0.4f},                                  1.00f);
+    test_min_p({0.1f, 0.2f, 0.3f, 0.4f}, {0.4f/0.4f},                                  1.05f);
 
     printf("XTC should:\n");
     test_xtc({0.4f, 0.3f, 0.2f, 0.1f},   {0.1f},                                0.99f, 0.09f);
