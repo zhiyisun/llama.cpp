@@ -98,6 +98,10 @@ llama_test(test-tokenizer-0 NAME test-tokenizer-0-qwen2             ARGS ${CMAKE
 llama_test(test-tokenizer-0 NAME test-tokenizer-0-refact            ARGS ${CMAKE_CURRENT_SOURCE_DIR}/../models/ggml-vocab-refact.gguf)
 llama_test(test-tokenizer-0 NAME test-tokenizer-0-starcoder         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/../models/ggml-vocab-starcoder.gguf)
 
+if (LLAMA_CURL)
+    llama_build_and_test(test-tokenizers-remote.cpp WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endif()
+
 if (LLAMA_LLGUIDANCE)
     llama_build_and_test(test-grammar-llguidance.cpp ARGS ${CMAKE_CURRENT_SOURCE_DIR}/../models/ggml-vocab-llama-bpe.gguf)
 endif ()
