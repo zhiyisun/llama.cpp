@@ -242,7 +242,7 @@ static bool curl_perform_with_retry(const std::string & url, CURL * curl, int ma
 }
 
 // download one single file from remote URL to local path
-static bool common_download_file_single(const std::string & url, const std::string & path, const std::string & bearer_token, bool offline) {
+bool common_download_file_single(const std::string & url, const std::string & path, const std::string & bearer_token, bool offline) {
     // Check if the file already exists locally
     auto file_exists = std::filesystem::exists(path);
 
@@ -465,7 +465,7 @@ static bool common_download_file_single(const std::string & url, const std::stri
 
 // download multiple files from remote URLs to local paths
 // the input is a vector of pairs <url, path>
-static bool common_download_file_multiple(const std::vector<std::pair<std::string, std::string>> & urls, const std::string & bearer_token, bool offline) {
+bool common_download_file_multiple(const std::vector<std::pair<std::string, std::string>> & urls, const std::string & bearer_token, bool offline) {
     // Prepare download in parallel
     std::vector<std::future<bool>> futures_download;
     for (auto const & item : urls) {
