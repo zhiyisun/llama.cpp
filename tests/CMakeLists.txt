@@ -99,7 +99,7 @@ llama_test(test-tokenizer-0 NAME test-tokenizer-0-refact            ARGS ${CMAKE
 llama_test(test-tokenizer-0 NAME test-tokenizer-0-starcoder         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/../models/ggml-vocab-starcoder.gguf)
 
 if (LLAMA_CURL)
-    llama_build_and_test(test-tokenizers-remote.cpp WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    llama_build_and_test(test-tokenizers-remote.cpp WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 endif()
 
 if (LLAMA_LLGUIDANCE)

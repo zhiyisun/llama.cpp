@@ -47,7 +47,7 @@ static json get_hf_repo_dir(const std::string & hf_repo_with_branch, bool recurs
     }
 
     // we use "=" to avoid clashing with other component, while still being allowed on windows
-    std::string cached_response_fname = "tree=" + hf_repo + "/" + repo_path + "=" + branch + ".json";
+    std::string cached_response_fname = "test_vocab=" + hf_repo + "/" + repo_path + "=" + branch + ".json";
     string_replace_all(cached_response_fname, "/", "_");
     std::string cached_response_path = fs_get_cache_file(cached_response_fname);
 
