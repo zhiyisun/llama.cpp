@@ -788,7 +788,10 @@ jobs:
       - name: Test
         id: cmake_test
         if: ${{ matrix.build != 'llvm-arm64' && matrix.build != 'llvm-arm64-opencl-adreno' }}
+        env:
+          CURL_PATH: ${{ steps.get_libcurl.outputs.curl_path }}
         run: |
+          Copy-Item $env:CURL_PATH\bin\libcurl-${{ matrix.arch }}.dll .\build\bin\Release\
           cd build
           ctest -L main -C Release --verbose --timeout 900
 
