@@ -4,7 +4,8 @@
 #include <string>
 #include <fstream>
 #include <vector>
-#include <json.hpp>
+
+#include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
@@ -109,32 +110,50 @@ int main(void) {
                 }
             }
 
-            if (common_download_file_multiple(files, {}, false)) {
-                std::string dir_sep(1, DIRECTORY_SEPARATOR);
+            if (!files.empty()) {
+                bool downloaded = false;
+                const size_t batch_size = 6;
+                size_t batches = (files.size() + batch_size - 1) / batch_size;
 
-                for (auto const & item : files) {
-                    std::string filepath = item.second;
+                for (size_t i = 0; i < batches; i++) {
+                    size_t batch_pos = (i * batch_size);
+                    size_t batch_step = batch_pos + batch_size;
+                    auto batch_begin = files.begin() + batch_pos;
+                    auto batch_end = batch_step >= files.size() ? files.end() : files.begin() + batch_step;
+                    std::vector<std::pair<std::string, std::string>> batch(batch_begin, batch_end);
 
-                    if (string_ends_with(filepath, ".gguf")) {
-                        std::string vocab_inp = filepath + ".inp";
-                        std::string vocab_out = filepath + ".out";
-                        auto matching_inp = std::find_if(files.begin(), files.end(), [&vocab_inp](const auto & p) {
-                            return p.second == vocab_inp;
-                        });
-                        auto matching_out = std::find_if(files.begin(), files.end(), [&vocab_out](const auto & p) {
-                            return p.second == vocab_out;
-                        });
-
-                        if (matching_inp != files.end() && matching_out != files.end()) {
-                            std::string test_command = "." + dir_sep + "test-tokenizer-0 '" + filepath + "'";
-                            assert(std::system(test_command.c_str()) == 0);
-                        } else {
-                            printf("test-tokenizers-remote: %s found without .inp/out vocab files, skipping...\n", filepath.c_str());
-                        }
+                    if (!(downloaded = common_download_file_multiple(batch, {}, false))) {
+                        break;
                     }
                 }
-            } else {
-                printf("test-tokenizers-remote: failed to download files, unable to perform tests...\n");
+
+                if (downloaded) {
+                    std::string dir_sep(1, DIRECTORY_SEPARATOR);
+
+                    for (auto const & item : files) {
+                        std::string filepath = item.second;
+
+                        if (string_ends_with(filepath, ".gguf")) {
+                            std::string vocab_inp = filepath + ".inp";
+                            std::string vocab_out = filepath + ".out";
+                            auto matching_inp = std::find_if(files.begin(), files.end(), [&vocab_inp](const auto & p) {
+                                return p.second == vocab_inp;
+                            });
+                            auto matching_out = std::find_if(files.begin(), files.end(), [&vocab_out](const auto & p) {
+                                return p.second == vocab_out;
+                            });
+
+                            if (matching_inp != files.end() && matching_out != files.end()) {
+                                std::string test_command = "." + dir_sep + "test-tokenizer-0 '" + filepath + "'";
+                                assert(std::system(test_command.c_str()) == 0);
+                            } else {
+                                printf("test-tokenizers-remote: %s found without .inp/out vocab files, skipping...\n", filepath.c_str());
+                            }
+                        }
+                    }
+                } else {
+                    printf("test-tokenizers-remote: failed to download files, unable to perform tests...\n");
+                }
             }
         } else {
             printf("test-tokenizers-remote: failed to retrieve repository info, unable to perform tests...\n");
