@@ -80,6 +80,9 @@ public:
         assert(isrc < pos.size());
         assert(idst < pos.size());
 
+        assert(pos[idst] == -1);
+        assert(pos[isrc] != -1);
+
         pos  [idst] = pos  [isrc];
         shift[idst] = shift[isrc];
         seq  [idst] = seq  [isrc];

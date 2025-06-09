@@ -462,7 +462,7 @@ bool llama_kv_cache_unified::update(llama_context * lctx, bool do_shift, const d
             for (uint32_t i = 0; i < n_kv; ++i) {
                 assert(dinfo.ids[i] <= n_kv);
 
-                if (dinfo.ids[i] == n_kv) {
+                if (dinfo.ids[i] == n_kv || dinfo.ids[i] == i) {
                     continue;
                 }
 
