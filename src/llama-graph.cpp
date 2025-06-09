@@ -3,7 +3,10 @@
 #include "llama-impl.h"
 #include "llama-batch.h"
 #include "llama-cparams.h"
-#include "llama-kv-cache.h"
+
+#include "llama-kv-cache-unified.h"
+#include "llama-kv-cache-unified-iswa.h"
+#include "llama-kv-cache-recurrent.h"
 
 #include <cassert>
 #include <cmath>
@@ -640,6 +643,20 @@ ggml_tensor * llm_graph_context::build_ffn(
                 cur = ggml_mul(ctx0, x0, x1);
                 cb(cur, "ffn_mul", il);
             } break;
+        case LLM_FFN_GEGLU:
+            {
+                // Split into two equal parts
+                int64_t split_point = cur->ne[0] / 2;
+                // TODO: these conts should not be needed
+                ggml_tensor * x0 = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, split_point, cur->ne[1], cur->nb[1], 0));
+                ggml_tensor * x1 = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, split_point, cur->ne[1], cur->nb[1], split_point * ggml_element_size(cur)));
+
+                x0 = ggml_gelu(ctx0, x0);
+                cb(x0, "ffn_gelu", il);
+
+                cur = ggml_mul(ctx0, x0, x1);
+                cb(cur, "ffn_geglu", il);
+            } break;
     }
 
     if (gate && type_gate == LLM_FFN_PAR) {
@@ -750,9 +767,8 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     cur = ggml_reshape_3d(ctx0, cur, n_embd, 1, n_tokens);
 
     if (weight_before_ffn) {
-        // TODO: this is a workaround as we don't yet have a repeat op that takes custom dim (ggml_repeat_4d)
-        ggml_tensor * repeated = ggml_new_tensor_3d(ctx0, cur->type, n_embd, n_expert_used, n_tokens);
-        repeated = ggml_repeat(ctx0, cur, repeated); // [n_embd, n_expert_used, n_tokens]
+        // repeat cur to [n_embd, n_expert_used, n_tokens]
+        ggml_tensor * repeated = ggml_repeat_4d(ctx0, cur, n_embd, n_expert_used, n_tokens, 1);
         cur = ggml_mul(ctx0, repeated, weights);
         cb(cur, "ffn_moe_weighted", il);
     }
