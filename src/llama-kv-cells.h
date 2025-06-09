@@ -317,8 +317,6 @@ public:
         pos[i]   += d;
         shift[i] += d;
 
-        seq_pos_add(i);
-
         has_shift = true;
 
         if (pos[i] < 0) {
@@ -326,11 +324,14 @@ public:
 
             seq[i].reset();
             pos[i] = -1;
+            shift[i] = 0;
 
             used.erase(i);
 
             return true;
         }
+
+        seq_pos_add(i);
 
         return false;
     }
