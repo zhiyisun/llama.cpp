@@ -144,9 +144,10 @@ public:
         assert(pos[i] != -1);
 
         seq_pos_rm(i);
+        seq[i].reset();
 
         pos[i] = -1;
-        seq[i].reset();
+        shift[i] = 0;
 
         used.erase(i);
     }
@@ -164,6 +165,7 @@ public:
 
         if (seq[i].none()) {
             pos[i] = -1;
+            shift[i] = 0;
 
             used.erase(i);
 
@@ -192,6 +194,7 @@ public:
             seq[i].reset();
 
             pos[i] = -1;
+            shift[i] = 0;
 
             used.erase(i);
 
@@ -320,8 +323,6 @@ public:
         has_shift = true;
 
         if (pos[i] < 0) {
-            seq_pos_rm(i);
-
             seq[i].reset();
             pos[i] = -1;
             shift[i] = 0;
