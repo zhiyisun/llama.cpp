@@ -597,7 +597,7 @@ struct llm_graph_context {
              ggml_cgraph * gf,
              ggml_tensor * s,
              ggml_tensor * state_copy,
-                 int32_t   n_state,
+                 int32_t   state_size,
                  int32_t   n_seqs,
                     bool   avoid_copies = false) const;
 
