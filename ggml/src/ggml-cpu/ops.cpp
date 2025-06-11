@@ -7771,7 +7771,7 @@ static void ggml_compute_forward_ssm_scan_f32(
                             t1 = exp_ps_sve(svptrue_b32(), t1);
                             svfloat32_t t2 = GGML_F32_VEC_MUL(vx_dt, vB);
 
-                            vs0 = GGML_F32_VEC_FMA(vs0, t1, t2);
+                            vs0 = GGML_F32_VEC_FMA(t2, vs0, t1);
                             r1_vector = GGML_F32_VEC_ADD(GGML_F32_VEC_MUL(vs0, vC), r1_vector);
 
                             GGML_F32_VEC_STORE(&s[ii*nc + k], vs0);
