@@ -342,7 +342,7 @@ struct model_variant {
 
             char buf[32];
             for (size_t i = 0; i < n_vocab; ++i) {
-                sprintf(buf, "<%zu>", i);
+                snprintf(buf, sizeof(buf), "<%zu>", i);
                 vocab_tokens[i] = std::string(buf);
                 vocab_scores[i] = -1000.0f;
                 vocab_types[i]  = 4;  // USER_DEFINED type
