@@ -941,7 +941,7 @@ int llama_context::decode(llama_batch & inp_batch) {
         }
     }
 
-    // this indicates we are doing pooled embedding, so we ignore batch.logits and output all tokens
+    // this indicates we are doing pooled embedding
     const bool embd_pooled = cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
 
     int64_t n_outputs_all = 0;
@@ -2077,7 +2077,7 @@ void llama_context::opt_epoch_iter(
 
         n_queued_tokens += n_tokens_all;
 
-        // this indicates we are doing pooled embedding, so we ignore batch.logits and output all tokens
+        // this indicates we are doing pooled embedding
         const bool embd_pooled = cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
 
         embd_seq.clear();
