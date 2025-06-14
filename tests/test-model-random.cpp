@@ -257,6 +257,7 @@ struct model_variant {
     model_variant(llm_arch arch, const std::string & name) : arch(arch), name(name) {
         add_kv(LLM_KV_GENERAL_TYPE, "model");
         add_kv(LLM_KV_GENERAL_ARCHITECTURE, llm_arch_name(arch));
+        add_kv(LLM_KV_GENERAL_NAME, name);
     }
 
     model_variant(const model_variant & other) :
@@ -359,7 +360,118 @@ struct model_variant {
         // TODO: how to make the variants more modular?
         switch (arch) {
             case LLM_ARCH_LLAMA:
-            case LLM_ARCH_LLAMA4:
+                {
+                    variants.push_back(model_variant(arch, "Llama2"));
+                    model_variant & cur = variants.back();
+
+                    n_embd = 16;
+                    const uint32_t n_head = 4;
+                    const uint32_t n_head_kv = n_head / 2;
+                    const uint32_t n_embd_head_k = n_embd / n_head;
+                    const uint32_t n_embd_k_gqa = n_embd_head_k * n_head_kv;
+                    const uint32_t n_embd_v_gqa = n_embd_k_gqa;
+
+                    cur.add_kv(LLM_KV_BLOCK_COUNT, n_layer);
+                    cur.add_kv(LLM_KV_CONTEXT_LENGTH, (uint32_t) 4096);
+                    cur.add_kv(LLM_KV_EMBEDDING_LENGTH, n_embd);
+                    cur.add_kv(LLM_KV_FEED_FORWARD_LENGTH, n_ff);
+                    cur.add_kv(LLM_KV_ATTENTION_HEAD_COUNT, n_head);
+                    cur.add_kv(LLM_KV_ATTENTION_HEAD_COUNT_KV, n_head_kv);
+                    cur.add_kv(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, 1e-5f);
+                    cur.add_kv(LLM_KV_ROPE_DIMENSION_COUNT, n_embd / n_head);
+
+                    add_tokenizer(cur, n_vocab);
+
+                    cur.add_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
+
+                    // output
+                    cur.add_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
+                    // omitting the actual output tensor to leave it use tok_embd
+
+                    for (uint32_t i = 0; i < n_layer; ++i) {
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd});
+
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd});
+
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd});
+
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff});
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd});
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff});
+                    }
+                } break;
+            case LLM_ARCH_LLAMA4: // has chunked interleaved sliding-window
+                {
+                    variants.push_back(model_variant(arch, "Llama4"));
+                    model_variant & cur = variants.back();
+
+                    n_layer = 4; // for the swa pattern
+                    n_embd = 16;
+                    const uint32_t n_head = 4;
+                    const uint32_t n_head_kv = n_head / 2;
+                    const uint32_t n_embd_head_k = n_embd / n_head;
+                    const uint32_t n_embd_k_gqa = n_embd_head_k * n_head_kv;
+                    const uint32_t n_embd_v_gqa = n_embd_k_gqa;
+                    const uint32_t n_moe_layer_step = 2;
+                    const uint32_t n_ff_exp = n_embd * 2;
+                    const uint32_t n_expert = 4;
+
+                    cur.add_kv(LLM_KV_BLOCK_COUNT, n_layer);
+                    cur.add_kv(LLM_KV_CONTEXT_LENGTH, (uint32_t) 4096);
+                    cur.add_kv(LLM_KV_EMBEDDING_LENGTH, n_embd);
+                    cur.add_kv(LLM_KV_FEED_FORWARD_LENGTH, n_ff);
+                    cur.add_kv(LLM_KV_ATTENTION_HEAD_COUNT, n_head);
+                    cur.add_kv(LLM_KV_ATTENTION_HEAD_COUNT_KV, n_head_kv);
+                    cur.add_kv(LLM_KV_EXPERT_COUNT, n_expert);
+                    cur.add_kv(LLM_KV_EXPERT_USED_COUNT, (uint32_t) 2);
+                    cur.add_kv(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, 1e-5f);
+                    cur.add_kv(LLM_KV_ROPE_DIMENSION_COUNT, n_embd / n_head);
+                    cur.add_kv(LLM_KV_INTERLEAVE_MOE_LAYER_STEP, n_moe_layer_step);
+                    cur.add_kv(LLM_KV_EXPERT_FEED_FORWARD_LENGTH, n_ff_exp);
+                    // FIXME: this isn't used because the default is 8192
+                    cur.add_kv(LLM_KV_ATTENTION_SLIDING_WINDOW, (uint32_t) 389); // prime number
+
+                    add_tokenizer(cur, n_vocab);
+
+                    cur.add_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
+
+                    // output
+                    cur.add_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
+                    // omitting the actual output tensor to leave it use tok_embd
+
+                    for (uint32_t i = 0; i < n_layer; ++i) {
+                        bool is_moe_layer = (i + 1) % n_moe_layer_step == 0;
+
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd});
+
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd});
+
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd});
+
+                        if (is_moe_layer) {
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "weight", i), {n_embd, n_expert});
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), {n_embd,   n_ff_exp, n_expert});
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {  n_ff_exp, n_embd, n_expert});
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {n_embd,   n_ff_exp, n_expert});
+
+                            // Shared expert
+                            const int64_t n_ff_shexp = n_ff_exp;
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_GATE_SHEXP, "weight", i), {    n_embd, n_ff_shexp});
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_DOWN_SHEXP, "weight", i), {n_ff_shexp, n_embd    });
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {    n_embd, n_ff_shexp});
+                        } else {
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff});
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd});
+                            cur.add_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff});
+                        }
+                    }
+                } break;
             case LLM_ARCH_DECI:
             case LLM_ARCH_FALCON:
             case LLM_ARCH_BAICHUAN:
@@ -392,7 +504,54 @@ struct model_variant {
             case LLM_ARCH_MINICPM:
             case LLM_ARCH_MINICPM3:
             case LLM_ARCH_GEMMA:
-            case LLM_ARCH_GEMMA2:
+                break;
+            case LLM_ARCH_GEMMA2: // has standard interleaved sliding-window
+                {
+                    variants.push_back(model_variant(arch, "Gemma2"));
+                    model_variant & cur = variants.back();
+
+                    n_layer = 2; // minimum for the swa pattern
+                    n_embd = 16;
+                    const uint32_t n_head = 4;
+                    const uint32_t n_head_kv = n_head / 2;
+                    const uint32_t n_embd_head_k = n_embd / n_head;
+                    const uint32_t n_embd_k_gqa = n_embd_head_k * n_head_kv;
+                    const uint32_t n_embd_v_gqa = n_embd_k_gqa;
+
+                    cur.add_kv(LLM_KV_CONTEXT_LENGTH, (uint32_t) 4096);
+                    cur.add_kv(LLM_KV_EMBEDDING_LENGTH, n_embd);
+                    cur.add_kv(LLM_KV_BLOCK_COUNT, n_layer);
+                    cur.add_kv(LLM_KV_FEED_FORWARD_LENGTH, n_ff);
+                    cur.add_kv(LLM_KV_ATTENTION_HEAD_COUNT, n_head);
+                    cur.add_kv(LLM_KV_ATTENTION_HEAD_COUNT_KV, n_head_kv);
+                    cur.add_kv(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, 1e-5f);
+                    cur.add_kv(LLM_KV_ATTN_LOGIT_SOFTCAPPING, 50.0f);
+                    cur.add_kv(LLM_KV_FINAL_LOGIT_SOFTCAPPING, 30.0f);
+                    cur.add_kv(LLM_KV_ATTENTION_SLIDING_WINDOW, (uint32_t) 389); // prime number
+
+                    add_tokenizer(cur, n_vocab);
+
+                    cur.add_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
+
+                    // output
+                    cur.add_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
+
+                    for (uint32_t i = 0; i < n_layer; ++i) {
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd});
+
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd});
+
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd});
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff});
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff});
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd});
+                        cur.add_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd});
+                    }
+                } break;
             case LLM_ARCH_GEMMA3:
             case LLM_ARCH_STARCODER2:
                 break;
@@ -679,7 +838,7 @@ struct reference_logits {
             // fprintf(stderr, "Potential error in seq_id %i starting from pos %i\n", seq_id, first_pos_error);
         }
 
-        const float denom = std::sqrt(sumr2 * sumo2);
+        const float denom = std::sqrt(sumr2) * std::sqrt(sumo2);
 
         return sumerr2 / (denom > 0.0f ? denom : 1.0f);
     }
@@ -767,8 +926,8 @@ int main(int argc, char ** argv) {
     std::mt19937 rng(42);
 
     // TODO: multiple sequences per token
-    const int32_t n_batch = 2048;
-    const int32_t n_seq_len = 1024;
+    const int32_t n_batch = 3 * 512;
+    const int32_t n_seq_len = 643; // prime number
 
     llama_batch batch = llama_batch_init(n_batch, 0, 1);
     // TODO: batch with embeddings
@@ -798,7 +957,7 @@ int main(int argc, char ** argv) {
         // const auto n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
         // const auto n_embd = llama_model_n_embd(model);
 
-        for (int32_t n_seq_max : { 1, 2, 13 } ) {
+        for (int32_t n_seq_max : { 1, 2, 5 } ) {
 
             // TODO(later): context shift testing
             for (int32_t n_ctx : { n_seq_len * n_seq_max }) {
@@ -811,8 +970,6 @@ int main(int argc, char ** argv) {
                     ref_params.n_ubatch = 1;
                     ref_params.n_ctx = n_seq_len;
                     ref_params.n_seq_max = 1;
-                    ref_params.n_threads = 1;
-                    ref_params.n_threads_batch = 1;
 
                     llama_context * ref_ctx = llama_init_from_model(model, ref_params);
 
@@ -827,6 +984,13 @@ int main(int argc, char ** argv) {
                 }
 
                 for (bool shuffle : { false, true }) {
+
+                    // skip shuffling the batch for non-recurrent models
+                    // (simple splits don't handle shuffled batches correctly)
+                    // FIXME: remove this
+                    if (shuffle && !llama_model_is_recurrent(model)) {
+                        continue;
+                    }
 
                     for (int32_t n_ubatch : { 1, 2, 512 } ) {
 
@@ -881,8 +1045,6 @@ int main(int argc, char ** argv) {
 
                             GGML_ASSERT(n_seq_max <= n_batch); // not handling splitting this across batches here
 
-                            // TODO: use seq_rm, seq_cp, etc. to test if they work properly
-
                             // cont batching
                             for (llama_seq_id s : seq_ids_in_batch) {
                                 llama_pos & pos = seq_id_n_past[s];
@@ -908,6 +1070,10 @@ int main(int argc, char ** argv) {
                             llama_batch_free(batch);
                             exit(1);
                         }
+
+                        // TODO: use seq_rm, seq_cp, etc. to test if they work properly
+
+                        // TODO: test pooled embeddings
 
                         llama_free(ctx);
                     }
