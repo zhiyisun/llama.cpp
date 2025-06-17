@@ -503,6 +503,7 @@ struct model_variant {
             case LLM_ARCH_BERT:
             case LLM_ARCH_NOMIC_BERT:
             case LLM_ARCH_NOMIC_BERT_MOE:
+            case LLM_ARCH_NEO_BERT:
             case LLM_ARCH_JINA_BERT_V2:
             case LLM_ARCH_BLOOM:
             case LLM_ARCH_STABLELM:
@@ -755,6 +756,8 @@ struct model_variant {
             case LLM_ARCH_WAVTOKENIZER_DEC:
             case LLM_ARCH_PLM:
             case LLM_ARCH_BAILINGMOE:
+            case LLM_ARCH_DOTS1:
+            case LLM_ARCH_ARCEE:
             case LLM_ARCH_UNKNOWN:
                 break;
         }
