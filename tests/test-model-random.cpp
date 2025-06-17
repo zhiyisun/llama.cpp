@@ -65,6 +65,7 @@ struct random_tensor {
         for (int64_t d : shape) {
             prod *= d;
         }
+        GGML_ASSERT(prod != 0);
         return ggml_row_size(type, prod);
     }
 
@@ -266,8 +267,20 @@ struct model_variant {
         tensors(other.tensors),
         metadata(other.metadata) {}
 
+    void add_tensor(const std::string & name, const std::vector<int64_t> & shape, float gain = 1.0f) {
+        // ref: https://github.com/pytorch/pytorch/blob/134179474539648ba7dee1317959529fbd0e7f89/torch/nn/init.py#L515-L516
+        const auto init_kaiming_uniform = [gain](uint32_t fan_in) {
+            const float std = gain * std::sqrt(fan_in);
+            const float bound = std::sqrt(3.0f) * std;
+
+            return std::uniform_real_distribution<float>(-bound, bound);
+        };
+
+        tensors.push_back(random_tensor(name, shape, init_kaiming_uniform(shape[0])));
+    }
+
     void add_tensor(const std::string & name, const std::vector<int64_t> & shape,
-                    const std::function<float(std::mt19937 &)> & distribution = std::normal_distribution<float>()) {
+                    const std::function<float(std::mt19937 &)> & distribution) {
         tensors.push_back(random_tensor(name, shape, distribution));
     }
 
@@ -299,7 +312,7 @@ struct model_variant {
 
         size_t total_size = 0;
         for (const auto & t : tensors) {
-            total_size += t.n_bytes() + ggml_tensor_overhead();
+            total_size += GGML_PAD(t.n_bytes() + ggml_tensor_overhead(), GGML_MEM_ALIGN);
         }
 
         ggml_init_params init_params = {
@@ -354,6 +367,11 @@ struct model_variant {
             m.add_kv(LLM_KV_TOKENIZER_LIST, vocab_tokens);
             m.add_kv(LLM_KV_TOKENIZER_SCORES, vocab_scores);
             m.add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE, vocab_types);
+        };
+
+        // don't actually use bias
+        const auto init_bias = []() {
+            return 0.0f;
         };
 
         // TODO: fill the variants
@@ -591,12 +609,12 @@ struct model_variant {
                         cur.add_tensor(tn(LLM_TENSOR_SSM_IN, "weight", i), { n_embd, 2 * d_inner });
 
                         cur.add_tensor(tn(LLM_TENSOR_SSM_CONV1D, "weight", i), { d_conv, d_inner });
-                        cur.add_tensor(tn(LLM_TENSOR_SSM_CONV1D, "bias", i), { d_inner });
+                        cur.add_tensor(tn(LLM_TENSOR_SSM_CONV1D, "bias", i), { d_inner }, init_bias);
 
                         cur.add_tensor(tn(LLM_TENSOR_SSM_X, "weight", i), { d_inner, dt_rank + 2 * d_state });
 
                         cur.add_tensor(tn(LLM_TENSOR_SSM_DT, "weight", i), { dt_rank, d_inner });
-                        cur.add_tensor(tn(LLM_TENSOR_SSM_DT, "bias", i), { d_inner });
+                        cur.add_tensor(tn(LLM_TENSOR_SSM_DT, "bias", i), { d_inner }, init_bias);
 
                         // no "weight" suffix for these
                         cur.add_tensor(tn(LLM_TENSOR_SSM_A, i), { d_state, d_inner }, init_A_S4D);
@@ -674,19 +692,19 @@ struct model_variant {
 
                     // Block 0, LN0
                     cur.add_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "weight"), {n_embd});
-                    cur.add_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "bias"), {n_embd});
+                    cur.add_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "bias"), {n_embd}, init_bias);
 
                     // output
                     cur.add_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
-                    cur.add_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"), {n_embd});
+                    cur.add_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"), {n_embd}, init_bias);
                     cur.add_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab});
 
                     for (uint32_t i = 0; i < n_layer; ++i) {
                         cur.add_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd});
-                        cur.add_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i),   {n_embd});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i),   {n_embd}, init_bias);
 
                         cur.add_tensor(tn(LLM_TENSOR_ATTN_NORM_2, "weight", i), {n_embd});
-                        cur.add_tensor(tn(LLM_TENSOR_ATTN_NORM_2, "bias", i),   {n_embd});
+                        cur.add_tensor(tn(LLM_TENSOR_ATTN_NORM_2, "bias", i),   {n_embd}, init_bias);
 
                         cur.add_tensor(tn(LLM_TENSOR_TIME_MIX_W0, "weight", i), {n_embd});
                         cur.add_tensor(tn(LLM_TENSOR_TIME_MIX_W1, "weight", i), {n_embd, n_lora_decay});
@@ -721,7 +739,7 @@ struct model_variant {
                         cur.add_tensor(tn(LLM_TENSOR_TIME_MIX_RECEPTANCE, "weight", i), {attn_hidden_size, n_embd});
 
                         cur.add_tensor(tn(LLM_TENSOR_TIME_MIX_LN, "weight", i), {n_embd});
-                        cur.add_tensor(tn(LLM_TENSOR_TIME_MIX_LN, "bias", i), {n_embd});
+                        cur.add_tensor(tn(LLM_TENSOR_TIME_MIX_LN, "bias", i), {n_embd}, init_bias);
                         cur.add_tensor(tn(LLM_TENSOR_TIME_MIX_OUTPUT, "weight", i), {n_embd, attn_hidden_size});
 
                         cur.add_tensor(tn(LLM_TENSOR_CHANNEL_MIX_LERP_K, "weight", i), {n_embd, 1, 1});
@@ -1036,7 +1054,7 @@ int main(int argc, char ** argv) {
                             for (llama_seq_id seq_id = 0; seq_id < n_seq_max; ++seq_id) {
                                 float err = ref_outputs[seq_id].validate_batch(ctx, batch, seq_id);
                                 if (!isfinite(err) || err > 1.0f / 1024.0f) {
-                                    fprintf(stderr, "Error for seq_id %i is %f\n", seq_id, err);
+                                    fprintf(stderr, "Error for seq_id %i is %f at n_past=%i\n", seq_id, err, seq_id_n_past[seq_id]);
                                     valid[seq_id] = false;
                                 }
                             }
