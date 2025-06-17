@@ -13734,6 +13734,75 @@ struct llm_build_arcee : public llm_graph_context {
     }
 };
 
+struct llm_build_smollm3 : public llm_graph_context {
+    llm_build_smollm3(const llama_model & model, const llm_graph_params & params, ggml_cgraph * gf) : llm_graph_context(params) {
+        std::vector<int32_t> no_rope_layers;
+        if (arch == LLM_ARCH_SMOLLM3) {
+            const int kid = gguf_find_key(model.meta, "smollm3.no_rope_layers");
+            if (kid != -1) {
+                const uint32_t n = gguf_get_arr_n(model.meta, kid);
+                no_rope_layers.resize(n);
+                const int nb = gguf_get_arr_data(model.meta, kid, no_rope_layers.data(), n * sizeof(int32_t));
+                GGML_ASSERT(nb == int(n * sizeof(int32_t)));
+            }
+        }
+
+        const int64_t n_tokens = params.n_tokens;
+        const int64_t n_layer  = hparams.n_layer;
+
+        gf->n_threads = params.n_threads;
+
+        // build the graph
+        inp_tokens->set_input(ubatch);
+        inp_pos->set_input(ubatch);
+        inp_attn_temp->set_input(ubatch);
+
+        struct ggml_tensor * cur = build_inp_embd();
+        struct ggml_tensor * lay_out = nullptr;
+
+        for (int il = 0; il < n_layer; ++il) {
+            struct ggml_tensor * inp_norm = build_norm(cur, hparams.f_norm_eps, il, tn(LLM_TENSOR_ATTN_NORM, il));
+            struct ggml_tensor * qkv      = build_attn(inp_norm, il);
+            struct ggml_tensor * q        = ggml_view_4d(ctx, qkv, hparams.n_embd_head_v, hparams.n_head(il),    n_tokens, 1, ggml_element_size(qkv)*hparams.n_embd_head_v, 0, 0, 0);
+            struct ggml_tensor * k        = ggml_view_4d(ctx, qkv, hparams.n_embd_head_k, hparams.n_head_kv(il), n_tokens, 1, ggml_element_size(qkv)*hparams.n_embd_head_k, ggml_element_size(qkv)*hparams.n_embd_k_gqa(il), 0, 0);
+            struct ggml_tensor * v        = ggml_view_4d(ctx, qkv, hparams.n_embd_head_v, hparams.n_head_kv(il), n_tokens, 1, ggml_element_size(qkv)*hparams.n_embd_head_v, ggml_element_size(qkv)*hparams.n_embd_k_gqa(il) + ggml_element_size(qkv)*hparams.n_embd_k_gqa(il), 0, 0);
+
+            ggml_set_name(q, "q");
+            ggml_set_name(k, "k");
+            ggml_set_name(v, "v");
+
+            struct ggml_tensor * qcur = q;
+            struct ggml_tensor * kcur = k;
+
+            bool apply_rope = true;
+            if (arch == LLM_ARCH_SMOLLM3) {
+                if (std::find(no_rope_layers.begin(), no_rope_layers.end(), il) != no_rope_layers.end()) {
+                    apply_rope = false;
+                }
+            }
+
+            if (apply_rope && get_tensor_meta(tn(LLM_TENSOR_ROPE_FREQS, il))) {
+                qcur = ggml_rope_ext(ctx, q, inp_pos->pos, get_tensor_meta(tn(LLM_TENSOR_ROPE_FREQS, il)), hparams.rope_type, 0, hparams.n_rot, hparams.n_gqa(il), hparams.rope_freq_base_train, hparams.rope_freq_scale_train, hparams.n_ctx_orig_yarn, hparams.rope_yarn_log_mul);
+                kcur = ggml_rope_ext(ctx, k, inp_pos->pos, get_tensor_meta(tn(LLM_TENSOR_ROPE_FREQS, il)), hparams.rope_type, 0, hparams.n_rot, hparams.n_gqa(il), hparams.rope_freq_base_train, hparams.rope_freq_scale_train, hparams.n_ctx_orig_yarn, hparams.rope_yarn_log_mul);
+            }
+
+            struct ggml_tensor * attn_out = build_attn_out(inp_norm, qcur, kcur, v, il);
+
+            if (hparams.use_par_res) {
+                // parallel residual
+                lay_out = ggml_add(ctx, attn_out, build_ff_par(inp_norm, il));
+            } else {
+                // sequential residual
+                lay_out = ggml_add(ctx, cur, attn_out);
+                lay_out = build_ff_seq(lay_out, il);
+            }
+            cur = lay_out;
+        }
+
+        build_output(cur, lay_out);
+    }
+};
+
 llama_memory_i * llama_model::create_memory(const llama_memory_params & params, llama_cparams & cparams) const {
     llama_memory_i * res;
 
@@ -14085,6 +14154,10 @@ llm_graph_result_ptr llama_model::build_graph(
             {
                 llm = std::make_unique<llm_build_arcee>(*this, params, gf);
             } break;
+        case LLM_ARCH_SMOLLM3:
+            {
+                llm = std::make_unique<llm_build_smollm3>(*this, params, gf);
+            } break;
         default:
             GGML_ABORT("fatal error");
     }
@@ -14235,8 +14308,10 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_CHAMELEON:
         case LLM_ARCH_BAILINGMOE:
         case LLM_ARCH_NEO_BERT:
+        case LLM_ARCH_SMOLLM3:
         case LLM_ARCH_ARCEE:
             return LLAMA_ROPE_TYPE_NORM;
+
 
         // the pairs of head values are offset by n_rot/2
         case LLM_ARCH_FALCON:

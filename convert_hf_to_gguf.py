@@ -6298,6 +6298,16 @@ class UltravoxWhisperEncoderModel(WhisperEncoderModel):
         super().set_gguf_parameters()
         self.gguf_writer.add_audio_stack_factor(self.global_config["stack_factor"])
 
+@Model.register("SmolLM3ForCausalLM")
+class SmolLM3Model(LlamaModel):
+    model_arch = gguf.MODEL_ARCH.SMOLLM3
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+
+        if self.model.config.no_rope_layers is not None:
+            self.gguf_writer.add_array("smollm3.no_rope_layers", self.model.config.no_rope_layers, gguf.GGUFValueType.INT32)
+
 ###### CONVERSION LOGIC ######
 
 
