@@ -1089,6 +1089,8 @@ int main(int argc, char ** argv) {
                         std::set<llama_seq_id> seq_ids_in_batch;
                         std::vector<llama_pos> seq_id_n_past(n_seq_max, 0);
 
+                        float max_err = 0.0f;
+
                         // start filling the batch with prompts
                         while (std::any_of(seq_id_n_past.begin(), seq_id_n_past.end(),
                                            [](llama_pos p) { return p < n_seq_len; })) {
@@ -1119,6 +1121,7 @@ int main(int argc, char ** argv) {
                                     fprintf(stderr, "Error for seq_id %i is %f at n_past=%i\n", seq_id, err, seq_id_n_past[seq_id]);
                                     valid[seq_id] = false;
                                 }
+                                max_err = std::max(err, max_err);
                             }
 
                             common_batch_clear(batch);
@@ -1140,10 +1143,11 @@ int main(int argc, char ** argv) {
                                 "Comparing output for '%s', with shuffle=%i, n_seq_max=%i, n_ctx=%i, n_ubatch=%i: ",
                                 variant.name.c_str(), shuffle, n_seq_max, n_ctx, n_ubatch);
                         if (std::all_of(valid.begin(), valid.end(), [](bool v) { return v; })) {
-                            fprintf(stdout, "\033[1;32mOK\033[0m\n");
+                            fprintf(stdout, "\033[1;32mOK\033[0m (max err: %.2g)\n", max_err);
                         } else {
-                            fprintf(stdout, "(%zu%%) \033[1;31mFAILED\033[0m\n",
-                                    std::count_if(valid.begin(), valid.end(), [](bool v) { return v == false; }) * 100 / valid.size());
+                            fprintf(stdout, "(%zu%%) \033[1;31mFAILED\033[0m (max err: %.4g)\n",
+                                    std::count_if(valid.begin(), valid.end(), [](bool v) { return v == false; }) * 100 / valid.size(),
+                                    max_err);
                             // cleanup and exit on first failure
                             llama_free(ctx);
                             llama_model_free(model);
