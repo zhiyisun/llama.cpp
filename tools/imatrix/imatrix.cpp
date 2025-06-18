@@ -180,7 +180,7 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
                     e.counts[ex]++;
 
                     for (int j = 0; j < (int)src1->ne[0]; ++j) {
-                        e.values[e_start + j] = std::fma(x[j], x[j], e.values[e_start + j]);
+                        e.values[e_start + j] += x[j] * x[j];
                         if (!std::isfinite((float)e.values[e_start + j])) {
                             LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
                             exit(1);
@@ -220,7 +220,7 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
             const float * x = (const float *) (data + row * src1->nb[1]);
             e.counts[0]++;
             for (int j = 0; j < (int)src1->ne[0]; ++j) {
-                e.values[j] = std::fma(x[j], x[j], e.values[j]);
+                e.values[j] += x[j] * x[j];
                 if (!std::isfinite((float)e.values[j])) {
                     LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
                     exit(1);
