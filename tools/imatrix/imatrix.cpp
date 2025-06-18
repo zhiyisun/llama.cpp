@@ -348,7 +348,8 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
 
     // TODO: use the new format by default also for .imatrix
     if (!str_has_suffix(fname, ".gguf")) {
-        return this->save_imatrix_legacy(n_chunk);
+        this->save_imatrix_legacy(n_chunk);
+        return;
     }
 
     if (n_chunk > 0) {
