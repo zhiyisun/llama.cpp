@@ -196,7 +196,9 @@ static int load_legacy_imatrix(const std::string & imatrix_file, std::vector<std
             exit(1);
         }
         if (ncall > 0) {
-            for (auto& v : e) v /= ncall;
+            for (auto & v : e) {
+                v /= ncall;
+            }
         }
 
         if (getenv("LLAMA_TRACE")) {

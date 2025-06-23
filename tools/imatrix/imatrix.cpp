@@ -4,6 +4,7 @@
 #include "llama.h"
 #include "gguf.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -15,7 +16,6 @@
 #include <fstream>
 #include <unordered_map>
 #include <map>
-#include <algorithm>
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -124,14 +124,21 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
     const char * data = is_host ? (const char *) src1->data : m_src1_data.data();
     GGML_ASSERT(src1->nb[0] == ggml_element_size(src1));
 
+    // TODO: 4d? (is that even used in practice?)
+    // the extra dimension would need to be stored somewhere to be reflected in the imatrix file
+    if (ggml_nrows(src1) != src1->ne[1] * src1->ne[2]) {
+        LOG_ERR("%s: tensor has more than 3 dimensions: %s", __func__, wname.c_str());
+        GGML_ASSERT(false);
+    }
+
     // this has been adapted to the new format of storing merged experts in a single 3d tensor
     // ref: https://github.com/ggml-org/llama.cpp/pull/6387
     if (t->op == GGML_OP_MUL_MAT_ID) {
         //   ids  -> [n_experts_used, n_tokens]
         //   src1 -> [cols, n_expert_used, n_tokens]
         const ggml_tensor * ids = t->src[2];
-        const int n_as = src0->ne[2];
-        const int n_ids = ids->ne[0];
+        const int64_t n_as = src0->ne[2];
+        const int64_t n_ids = ids->ne[0];
 
         // the top-k selected expert ids are stored in the ids tensor
         // for simplicity, always copy ids to host, because it is small
@@ -153,7 +160,7 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
             e.counts.resize(n_as, 0);
         }
         else if (e.values.size() != (size_t)src1->ne[0]*n_as) {
-            LOG_ERR("%s: inconsistent size for %s (%d vs %d)\n", __func__, wname.c_str(), (int)e.values.size(), (int)src1->ne[0]*n_as);
+            LOG_ERR("%s: inconsistent size for %s (%d vs %d)\n", __func__, wname.c_str(), (int)e.values.size(), (int)(src1->ne[0]*n_as));
             exit(1); //GGML_ABORT("fatal error");
         }
         else if (e.counts.size() != (size_t)n_as) {
@@ -162,11 +169,11 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
         }
         LOG_DBGV(2, "%s[%d]: %32s, %s, %5d x %5d, %d\n", __func__, m_last_chunk, wname.c_str(), ggml_op_name(t->op), (int)src1->ne[0], (int)src1->ne[2], (int)src1->type);
         // loop over all possible experts, regardless if they are used or not in the batch
-        for (int ex = 0; ex < n_as; ++ex) {
+        for (int64_t ex = 0; ex < n_as; ++ex) {
             size_t e_start = ex*src1->ne[0];
 
-            for (int idx = 0; idx < n_ids; ++idx) {
-                for (int row = 0; row < (int)src1->ne[2]; ++row) {
+            for (int64_t idx = 0; idx < n_ids; ++idx) {
+                for (int64_t row = 0; row < src1->ne[2]; ++row) {
                     const int excur = *(const int32_t *) (m_ids.data() + row*ids->nb[1] + idx*ids->nb[0]);
 
                     GGML_ASSERT(excur >= 0 && excur < n_as); // sanity check
@@ -179,7 +186,7 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
 
                     e.counts[ex]++;
 
-                    for (int j = 0; j < (int)src1->ne[0]; ++j) {
+                    for (int64_t j = 0; j < src1->ne[0]; ++j) {
                         e.values[e_start + j] += x[j] * x[j];
                         if (!std::isfinite((float)e.values[e_start + j])) {
                             LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
@@ -202,40 +209,48 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
         }
     } else {
         auto & e = m_stats[wname];
+        const int64_t n_mat = src1->ne[2] * src1->ne[3];
+
         if (e.values.empty()) {
-            e.values.resize(src1->ne[0], 0);
-            e.counts.resize(1, 0);
+            e.values.resize(src1->ne[0] * n_mat, 0);
+            e.counts.resize(n_mat, 0);
         }
-        else if (e.values.size() != (size_t)src1->ne[0]) {
-            LOG_ERR("%s: inconsistent size for %s (%d vs %d)\n", __func__, wname.c_str(), (int)e.values.size(), (int)src1->ne[0]);
+        else if (e.values.size() != (size_t)(src1->ne[0] * n_mat)) {
+            LOG_ERR("%s: inconsistent size for %s (%d vs %d)\n", __func__, wname.c_str(), (int)e.values.size(), (int)(src1->ne[0] * n_mat));
             exit(1); //GGML_ABORT("fatal error");
         }
-        else if (e.counts.size() != 1) {
-            LOG_ERR("%s: inconsistent expert count for %s (%d vs %d)\n", __func__, wname.c_str(), (int)e.counts.size(), 1);
+        else if (e.counts.size() != (size_t)n_mat) {
+            LOG_ERR("%s: inconsistent expert count for %s (%d vs %d)\n", __func__, wname.c_str(), (int)e.counts.size(), (int)n_mat);
             exit(1); //GGML_ABORT("fatal error");
         }
-        LOG_DBGV(2, "%s[%d]: %32s, %s, %5d x %5d, %d\n", __func__, m_last_chunk, wname.c_str(), ggml_op_name(t->op), (int)src1->ne[0], (int)src1->ne[1], (int)src1->type);
-        // TODO: higher dimensions
-        for (int row = 0; row < (int)src1->ne[1]; ++row) {
-            const float * x = (const float *) (data + row * src1->nb[1]);
-            e.counts[0]++;
-            for (int j = 0; j < (int)src1->ne[0]; ++j) {
-                e.values[j] += x[j] * x[j];
-                if (!std::isfinite((float)e.values[j])) {
-                    LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
-                    exit(1);
+        LOG_DBGV(2, "%s[%d]: %32s, %s, %5d x %5d x %5d, %d\n", __func__, m_last_chunk, wname.c_str(), ggml_op_name(t->op), (int)src1->ne[0], (int)src1->ne[1], (int)src1->ne[2], (int)src1->type);
+        for (int64_t i3 = 0; i3 < src1->ne[3]; ++i3) {
+            for (int64_t i2 = 0; i2 < src1->ne[2]; ++i2) {
+                const int64_t mat_id = i3 * src1->ne[2] + i2;
+                const int64_t mat_start = mat_id * src1->ne[0];
+
+                for (int64_t row = 0; row < src1->ne[1]; ++row) {
+                    const float * x = (const float *) (data + row * src1->nb[1] + i2 * src1->nb[2] + i3 * src1->ne[3]);
+                    e.counts[mat_id]++;
+                    for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                        e.values[mat_start + j] += x[j] * x[j];
+                        if (!std::isfinite((float)e.values[j])) {
+                            LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
+                            exit(1);
+                        }
+                    }
                 }
-            }
-        }
-        const int32_t n_chunk = e.counts[0] / chunk_size;
-        if (n_chunk > m_last_chunk) {
-            const int32_t chunk_step = n_chunk - m_last_chunk;
-            m_last_chunk = n_chunk;
-            if ((m_last_chunk % m_params.n_out_freq) / chunk_step == 0) {
-                save_imatrix();
-            }
-            if (m_params.n_save_freq > 0 && (m_last_chunk % m_params.n_save_freq) / chunk_step == 0) {
-                save_imatrix(m_last_chunk);
+                const int32_t n_chunk = e.counts[mat_id] / chunk_size;
+                if (n_chunk > m_last_chunk) {
+                    const int32_t chunk_step = n_chunk - m_last_chunk;
+                    m_last_chunk = n_chunk;
+                    if ((m_last_chunk % m_params.n_out_freq) / chunk_step == 0) {
+                        save_imatrix();
+                    }
+                    if (m_params.n_save_freq > 0 && (m_last_chunk % m_params.n_save_freq) / chunk_step == 0) {
+                        save_imatrix(m_last_chunk);
+                    }
+                }
             }
         }
     }
