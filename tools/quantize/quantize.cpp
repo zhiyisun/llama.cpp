@@ -147,15 +147,6 @@ static void usage(const char * executable) {
     exit(1);
 }
 
-// TODO: share with implementation in imatrix.cpp
-static bool str_remove_suffix(std::string & str, const std::string & suffix) {
-    bool has_suffix = str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), str.size(), suffix) == 0;
-    if (has_suffix) {
-        str = str.substr(0, str.size() - suffix.size());
-    }
-    return has_suffix;
-}
-
 static int load_legacy_imatrix(const std::string & imatrix_file, std::vector<std::string> & imatrix_datasets, std::unordered_map<std::string, std::vector<float>> & imatrix_data) {
     std::ifstream in(imatrix_file.c_str(), std::ios::binary);
     if (!in) {
@@ -265,10 +256,10 @@ static int load_imatrix(const std::string & imatrix_file, std::vector<std::strin
 
         if (name.empty()) { continue; }
 
-        if (str_remove_suffix(name, sums_suffix)) {
+        if (string_remove_suffix(name, sums_suffix)) {
             // in_sum2
             sums_counts_for[std::move(name)].first = cur;
-        } else if (str_remove_suffix(name, counts_suffix)) {
+        } else if (string_remove_suffix(name, counts_suffix)) {
             // counts
             sums_counts_for[std::move(name)].second = cur;
         } else {

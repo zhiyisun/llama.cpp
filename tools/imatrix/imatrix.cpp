@@ -31,18 +31,6 @@ static void print_usage(int, char ** argv) {
     LOG("\n");
 }
 
-static bool str_has_suffix(const std::string & str, const std::string & suffix) {
-    return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), str.size(), suffix) == 0;
-}
-
-static bool str_remove_suffix(std::string & str, const std::string & suffix) {
-    bool has_suffix = str_has_suffix(str, suffix);
-    if (has_suffix) {
-        str = str.substr(0, str.size() - suffix.size());
-    }
-    return has_suffix;
-}
-
 static const char * const LLM_KV_IMATRIX_DATASETS    = "imatrix.datasets";
 static const char * const LLM_KV_IMATRIX_CHUNK_COUNT = "imatrix.chunk_count";
 static const char * const LLM_KV_IMATRIX_CHUNK_SIZE  = "imatrix.chunk_size";
@@ -362,7 +350,7 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
     auto fname = m_params.out_file;
 
     // TODO: use the new format by default also for .imatrix
-    if (!str_has_suffix(fname, ".gguf")) {
+    if (!string_ends_with(fname, ".gguf")) {
         this->save_imatrix_legacy(n_chunk);
         return;
     }
@@ -584,10 +572,10 @@ bool IMatrixCollector::load_imatrix(const char * file_name) {
 
         if (name.empty()) { continue; }
 
-        if (str_remove_suffix(name, in_sum2_suffix)) {
+        if (string_remove_suffix(name, in_sum2_suffix)) {
             // in_sum2
             sums_counts_for[std::move(name)].first = cur;
-        } else if (str_remove_suffix(name, counts_suffix)) {
+        } else if (string_remove_suffix(name, counts_suffix)) {
             // counts
             sums_counts_for[std::move(name)].second = cur;
         } else {
