@@ -25,11 +25,12 @@ llama_kv_cache_unified::llama_kv_cache_unified(
                      bool    offload,
                  uint32_t    kv_size,
                  uint32_t    n_seq_max,
+                 uint32_t    n_seq_virt,
                  uint32_t    n_pad,
                  uint32_t    n_swa,
            llama_swa_type    swa_type) :
     model(model), hparams(model.hparams), v_trans(v_trans),
-    n_seq_max(n_seq_max), n_pad(n_pad), n_swa(n_swa), swa_type(swa_type) {
+    n_seq_max(n_seq_max), n_seq_virt(n_seq_virt), n_pad(n_pad), n_swa(n_swa), swa_type(swa_type) {
 
     GGML_ASSERT(kv_size % n_pad == 0);
 
@@ -92,8 +93,8 @@ llama_kv_cache_unified::llama_kv_cache_unified(
         ggml_tensor * k;
         ggml_tensor * v;
 
-        k = ggml_new_tensor_2d(ctx, type_k, n_embd_k_gqa, kv_size);
-        v = ggml_new_tensor_2d(ctx, type_v, n_embd_v_gqa, kv_size);
+        k = ggml_new_tensor_3d(ctx, type_k, n_embd_k_gqa, kv_size, n_seq_virt);
+        v = ggml_new_tensor_3d(ctx, type_v, n_embd_v_gqa, kv_size, n_seq_virt);
 
         ggml_format_name(k, "cache_k_l%d", il);
         ggml_format_name(v, "cache_v_l%d", il);
@@ -122,8 +123,8 @@ llama_kv_cache_unified::llama_kv_cache_unified(
         const size_t memory_size_k = size_k_bytes();
         const size_t memory_size_v = size_v_bytes();
 
-        LLAMA_LOG_INFO("%s: size = %7.2f MiB (%6u cells, %3d layers, %2u seqs), K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
-                (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f), kv_size, (int) layers.size(), n_seq_max,
+        LLAMA_LOG_INFO("%s: size = %7.2f MiB (%6u cells, %3d layers, %2u/%2u seqs), K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
+                (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f), kv_size, (int) layers.size(), n_seq_max, n_seq_virt,
                 ggml_type_name(type_k), (float)memory_size_k / (1024.0f * 1024.0f),
                 ggml_type_name(type_v), (float)memory_size_v / (1024.0f * 1024.0f));
     }
@@ -325,7 +326,7 @@ llama_memory_context_ptr llama_kv_cache_unified::init_batch(
 
         std::vector<llama_ubatch> ubatches;
         while (true) {
-            auto ubatch = balloc.split_simple(n_ubatch);
+            auto ubatch = n_seq_virt == 1 ? balloc.split_simple(n_ubatch) : balloc.split_equal(n_ubatch);
 
             if (ubatch.n_tokens == 0) {
                 break;
@@ -525,6 +526,10 @@ bool llama_kv_cache_unified::update(llama_context * lctx, bool do_shift, const d
 }
 
 llama_kv_cache_unified::slot_info llama_kv_cache_unified::find_slot(const llama_ubatch & ubatch, bool cont) const {
+    if (n_seq_virt > 1) {
+        GGML_ASSERT(!cont && "n_seq_virt > 1 does not support continuous slots");
+    }
+
     const uint32_t n_tokens = ubatch.n_tokens;
 
     uint32_t head_cur = this->head;
@@ -617,45 +622,51 @@ llama_kv_cache_unified::slot_info llama_kv_cache_unified::find_slot(const llama_
         for (uint32_t i = 0; i < n_test; i++) {
             const auto idx = head_cur;
 
-            //const llama_pos    pos    = ubatch.pos[i];
-            //const llama_seq_id seq_id = ubatch.seq_id[i][0];
-
-            // can we use this cell? either:
-            //  - the cell is empty
-            //  - the cell is occupied only by one sequence:
-            //    - (disabled) mask causally, if the sequence is the same as the one we are inserting
-            //    - mask SWA, using current max pos for that sequence in the cache
-            //                always insert in the cell with minimum pos
-            bool can_use = cells.is_empty(idx);
-
-            if (!can_use && cells.seq_count(idx) == 1) {
-                const llama_pos pos_cell = cells.pos_get(idx);
-
-                // (disabled) causal mask
-                // note: it's better to purge any "future" tokens beforehand
-                //if (cells.seq_has(idx, seq_id)) {
-                //    can_use = pos_cell >= pos;
-                //}
-
-                if (!can_use) {
-                    const llama_seq_id seq_id_cell = cells.seq_get(idx);
-
-                    // SWA mask
-                    if (is_masked_swa(pos_cell, cells.seq_pos_max(seq_id_cell) + 1)) {
-                        can_use = true;
-                    }
-                }
-            }
-
             head_cur++;
             n_tested++;
 
-            if (can_use) {
-                res.idxs[n_found] = idx;
+            if (n_seq_virt == 1) {
+                //const llama_pos    pos    = ubatch.pos[i];
+                //const llama_seq_id seq_id = ubatch.seq_id[i][0];
 
-                n_found++;
+                // can we use this cell? either:
+                //  - the cell is empty
+                //  - the cell is occupied only by one sequence:
+                //    - (disabled) mask causally, if the sequence is the same as the one we are inserting
+                //    - mask SWA, using current max pos for that sequence in the cache
+                //                always insert in the cell with minimum pos
+                bool can_use = cells.is_empty(idx);
+
+                if (!can_use && cells.seq_count(idx) == 1) {
+                    const llama_pos pos_cell = cells.pos_get(idx);
+
+                    // (disabled) causal mask
+                    // note: it's better to purge any "future" tokens beforehand
+                    //if (cells.seq_has(idx, seq_id)) {
+                    //    can_use = pos_cell >= pos;
+                    //}
+
+                    if (!can_use) {
+                        const llama_seq_id seq_id_cell = cells.seq_get(idx);
+
+                        // SWA mask
+                        if (is_masked_swa(pos_cell, cells.seq_pos_max(seq_id_cell) + 1)) {
+                            can_use = true;
+                        }
+                    }
+                }
+
+                if (can_use) {
+                    res.idxs[n_found] = idx;
+
+                    n_found++;
+                } else {
+                    if (cont) {
+                        break;
+                    }
+                }
             } else {
-                break;
+                GGML_ABORT("WIP");
             }
         }
 

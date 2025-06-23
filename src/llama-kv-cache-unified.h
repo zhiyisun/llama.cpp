@@ -52,9 +52,6 @@ public:
         void clear() {
             idxs.clear();
         }
-
-        // TODO: implement
-        //std::vector<idx_vec_t> seq_idxs;
     };
 
     using slot_info_vec_t = std::vector<slot_info>;
@@ -68,6 +65,7 @@ public:
                          bool    offload,
                      uint32_t    kv_size,
                      uint32_t    n_seq_max,
+                     uint32_t    n_seq_virt,
                      uint32_t    n_pad,
                      uint32_t    n_swa,
                llama_swa_type    swa_type);
@@ -173,7 +171,8 @@ private:
     // note: this is not part of the KV state and it's only used to speed-up the find_slot() method
     uint32_t head = 0;
 
-    const uint32_t n_seq_max = 1;
+    const uint32_t n_seq_max  = 1;
+    const uint32_t n_seq_virt = 1;
 
     // required padding
     const uint32_t n_pad = 1;
