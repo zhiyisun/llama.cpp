@@ -206,7 +206,7 @@ static int load_legacy_imatrix(const std::string & imatrix_file, std::vector<std
         }
     }
 
-    // latest imatrix version contains the dataset filename at the end of the file
+    // latest legacy imatrix version contains the dataset filename at the end of the file
     int m_last_call = 0;
     if (in.peek() != EOF) {
         in.read((char *)&m_last_call, sizeof(m_last_call));
@@ -318,7 +318,7 @@ static int load_imatrix(const std::string & imatrix_file, std::vector<std::strin
     int m_last_chunk = gguf_get_val_u32(ctx_gguf, chunk_count_idx);
 
     int64_t n_datasets = gguf_get_arr_n(ctx_gguf, dataset_idx);
-    imatrix_datasets.resize(n_datasets);
+    imatrix_datasets.reserve(n_datasets);
     for (int64_t i = 0; i < n_datasets; ++i) {
         imatrix_datasets.push_back(gguf_get_val_str(ctx_gguf, dataset_idx));
     }
