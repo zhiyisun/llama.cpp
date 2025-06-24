@@ -167,10 +167,6 @@ private:
 
     bool v_trans = true;  // the value tensor is transposed
 
-    // the current index from where we start searching for a free slot in the ring buffer of KV cells (see find_slot())
-    // note: this is not part of the KV state and it's only used to speed-up the find_slot() method
-    uint32_t head = 0;
-
     const uint32_t n_seq_max  = 1;
     const uint32_t n_seq_virt = 1;
 
@@ -192,7 +188,13 @@ private:
     std::vector<ggml_context_ptr>        ctxs;
     std::vector<ggml_backend_buffer_ptr> bufs;
 
-    llama_kv_cells_unified cells;
+    // the current index from where we start searching for a free slot in the ring buffer of KV cells (see find_slot())
+    // note: this is not part of the KV state and it's only used to speed-up the find_slot() method
+    uint32_t v_heads[LLAMA_MAX_SEQ];
+
+    llama_kv_cells_unified v_cells[LLAMA_MAX_SEQ];
+
+    std::vector<uint32_t> seq_virt_idx;
 
     std::vector<kv_layer> layers;
 
