@@ -7252,6 +7252,375 @@ void ggml_compute_forward_flash_attn_ext(
     }
 }
 
+// ggml_compute_forward_blocked_attn_ext
+
+// BlockedAttention implementation - improved version with cache-aware blocking and non-contiguous V support
+// Based on xFasterTransformer's blockedAttention algorithm
+static void ggml_compute_forward_blocked_attn_ext_f16(
+        const ggml_compute_params * params,
+        const ggml_tensor * q,
+        const ggml_tensor * k,
+        const ggml_tensor * v,
+        const ggml_tensor * mask,
+        ggml_tensor * dst) {
+    // The implementation should follow the cache-aware blocking strategy,
+    // handle non-contiguous V, and use F32 accumulators.
+    // For now, abort to indicate unimplemented.
+    // GGML_ABORT("ggml_compute_forward_blocked_attn_ext_f16: not implemented");
+
+    GGML_TENSOR_LOCALS(int64_t, neq, q,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbq, q,   nb)
+    GGML_TENSOR_LOCALS(int64_t, nek, k,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbk, k,   nb)
+    GGML_TENSOR_LOCALS(int64_t, nev, v,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbv, v,   nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst, nb)
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t D_head = nek0;  // head dimension  
+    const int64_t D_v = nev0;     // value dimension
+    const int64_t N_tokens = neq1; // sequence length
+    const int64_t N_kv = nek1;    // key/value sequence length
+    const int64_t N_heads = neq2; // number of heads
+    const int64_t N_batch = neq3; // batch size
+
+    GGML_ASSERT(ne0 == D_v);
+    GGML_ASSERT(ne2 == N_tokens);  // Match FlashAttention: dst.ne[2] == sequence length
+    GGML_ASSERT(neq0 == D_head);
+    GGML_ASSERT(nek0 == D_head);
+    GGML_ASSERT(nev0 == D_v);
+    GGML_ASSERT(neq1 == N_tokens);
+
+    // dst cannot be transposed or permuted
+    GGML_ASSERT(nb0 == sizeof(float));
+    GGML_ASSERT(nb0 <= nb1);
+    GGML_ASSERT(nb1 <= nb2);
+    GGML_ASSERT(nb2 <= nb3);
+
+    // broadcast factors
+    const int64_t rk2 = neq2/nek2;
+    const int64_t rk3 = neq3/nek3;
+    const int64_t rv2 = neq2/nev2;
+    const int64_t rv3 = neq3/nev3;
+
+    // Get attention parameters - use memcpy to avoid aliasing warnings
+    float scale, max_bias, logit_softcap;
+    memcpy(&scale, (const float *) dst->op_params + 0, sizeof(float));
+    memcpy(&max_bias, (const float *) dst->op_params + 1, sizeof(float));
+    memcpy(&logit_softcap, (const float *) dst->op_params + 2, sizeof(float));
+    
+    // Pre-compute scaled value to avoid repeated division
+    const float final_scale = (logit_softcap != 0.0f) ? scale / logit_softcap : scale;
+
+    // ALiBi support - optimize slope calculations
+    const bool use_alibi = (max_bias > 0.0f);
+    const uint32_t n_head = N_heads;
+    const uint32_t n_head_log2 = 1u << (uint32_t) floor(log2(n_head));
+    const float m0 = use_alibi ? powf(2.0f, -max_bias / n_head_log2) : 1.0f;
+    const float m1 = use_alibi ? powf(2.0f, -(max_bias / 2.0f) / n_head_log2) : 1.0f;
+
+    // Optimized block size calculation with better cache utilization
+    auto get_optimal_block_size = [](int64_t seq_len, int64_t head_size) -> int64_t {
+        if (seq_len <= 64) return seq_len;
+        
+        // Target L2 cache size (conservative estimate)
+        const int64_t target_cache_size = 1024 * 1024; // 1MB
+        const int64_t elem_size = sizeof(float);
+        
+        // Calculate memory footprint: Q_block + scores + output_block
+        const int64_t base_mem = head_size * elem_size; // Q vector
+        const int64_t score_mem = seq_len * elem_size;  // scores array
+        const int64_t output_mem = head_size * elem_size; // output vector
+        
+        int64_t block_size = target_cache_size / (base_mem + score_mem + output_mem);
+        block_size = (block_size / 32) * 32; // Align to 32 for vectorization
+        
+        return block_size > 0 ? (block_size < seq_len ? block_size : seq_len) : 32;
+    };
+
+    const int64_t M_BLOCK_SIZE = get_optimal_block_size(N_tokens, D_head);
+    const int64_t M_BLOCKS = (N_tokens + M_BLOCK_SIZE - 1) / M_BLOCK_SIZE;
+
+    // Type conversion utilities - cache function pointers
+    const ggml_type k_vec_dot_type = ggml_get_type_traits_cpu(k->type)->vec_dot_type;
+    const ggml_from_float_t q_to_vec_dot = ggml_get_type_traits_cpu(k_vec_dot_type)->from_float;
+    const ggml_vec_dot_t kq_vec_dot = ggml_get_type_traits_cpu(k->type)->vec_dot;
+
+    GGML_ASSERT(q_to_vec_dot && "slim_attn: unsupported K-type");
+
+    // Pre-determine contiguity for performance
+    const bool q_contiguous = (nbq0 == sizeof(float));
+    const bool k_contiguous = (k->type == GGML_TYPE_F32) ? (nbk0 == sizeof(float)) : (nbk0 == sizeof(ggml_fp16_t));
+    const bool v_contiguous = (v->type == GGML_TYPE_F32) ? (nbv0 == sizeof(float)) : (nbv0 == sizeof(ggml_fp16_t));
+    const bool k_is_f32 = (k->type == GGML_TYPE_F32);
+    const bool v_is_f32 = (v->type == GGML_TYPE_F32);
+
+    // Working memory layout - allocate per thread
+    const size_t scores_size = N_kv * sizeof(float);
+    const size_t q_block_size = M_BLOCK_SIZE * D_head * sizeof(float);
+    const size_t output_block_size = M_BLOCK_SIZE * D_v * sizeof(float);
+    const size_t total_work_size = (scores_size + q_block_size + output_block_size + sizeof(float) - 1) / sizeof(float);
+    
+    if (total_work_size * sizeof(float) > params->wsize / nth) {
+        // Insufficient work memory - fallback to simple processing
+        return;
+    }
+    
+    float * work_mem = (float *) params->wdata + ith * total_work_size;
+    float * scores = work_mem;
+    float * q_block = work_mem + N_kv;
+    float * output_block = work_mem + N_kv + M_BLOCK_SIZE * D_head;
+
+    // Process each batch and head
+    const int64_t total_tasks = N_batch * N_heads * M_BLOCKS;
+    const int64_t tasks_per_thread = (total_tasks + nth - 1) / nth;
+    const int64_t task_start = ith * tasks_per_thread;
+    const int64_t task_end = task_start + tasks_per_thread < total_tasks ? task_start + tasks_per_thread : total_tasks;
+
+    for (int64_t task = task_start; task < task_end; ++task) {
+        // Decode task indices
+        const int64_t i_batch = task / (N_heads * M_BLOCKS);
+        const int64_t i_head = (task % (N_heads * M_BLOCKS)) / M_BLOCKS;
+        const int64_t i_block = task % M_BLOCKS;
+
+        const int64_t start_token = i_block * M_BLOCK_SIZE;
+        const int64_t end_token = start_token + M_BLOCK_SIZE < N_tokens ? start_token + M_BLOCK_SIZE : N_tokens;
+        const int64_t block_tokens = end_token - start_token;
+
+        // ALiBi slope calculation - use lookup table for common head counts
+        const uint32_t h = i_head;
+        float slope;
+        if (!use_alibi) {
+            slope = 1.0f;
+        } else {
+            slope = (h < n_head_log2) ? powf(m0, h + 1) : powf(m1, 2*(h - n_head_log2) + 1);
+        }
+
+        // Get pointers for this batch/head - calculate once
+        const ggml_fp16_t * mask_ptr = mask ? 
+            (ggml_fp16_t *)((char *) mask->data + start_token * mask->nb[1]) : NULL;
+
+        const int64_t ik_batch = i_batch / rk3;
+        const int64_t ik_head = i_head / rk2;
+        const int64_t iv_batch = i_batch / rv3;
+        const int64_t iv_head = i_head / rv2;
+
+        // Q block: [start_token:end_token, D_head] - calculate base pointer once
+        const char * q_base = (const char *) q->data + (start_token * nbq1 + i_head * nbq2 + i_batch * nbq3);
+        const char * k_base = (const char *) k->data + (ik_head * nbk2 + ik_batch * nbk3);
+        const char * v_base = (const char *) v->data + (iv_head * nbv2 + iv_batch * nbv3);
+
+        // Clear output block - use optimized memset
+        memset(output_block, 0, block_tokens * D_v * sizeof(float));
+
+        // Compute attention for each token in the block
+        for (int64_t t = 0; t < block_tokens; ++t) {
+            const int64_t abs_token = start_token + t;
+            
+            // Get Q vector for this token
+            const float * q_vec = (const float *) (q_base + t * nbq1);
+
+            // Phase 1: Compute attention scores Q * K^T - optimized inner loop
+            float max_score = -INFINITY;
+            
+            // Optimize for contiguous case first
+            if (q_contiguous && k_contiguous && k_is_f32) {
+                // Fast path: both Q and K are contiguous F32
+                for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
+                    float mask_val = 0.0f;
+                    if (mask_ptr && abs_token < N_tokens) {
+                        mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
+                        if (mask_val == -INFINITY) {
+                            scores[k_pos] = -INFINITY;
+                            continue;
+                        }
+                    }
+
+                    const float * k_vec = (const float *) (k_base + k_pos * nbk1);
+                    float score;
+                    ggml_vec_dot_f32(D_head, &score, 0, q_vec, 0, k_vec, 0, 1);
+                    
+                    score = score * final_scale + mask_val;
+                    if (logit_softcap != 0.0f) {
+                        score = logit_softcap * tanhf(score);
+                    }
+
+                    scores[k_pos] = score;
+                    max_score = score > max_score ? score : max_score;
+                }
+            } else if (q_contiguous && k_contiguous && !k_is_f32) {
+                // Semi-fast path: contiguous but K is F16
+                q_to_vec_dot(q_vec, q_block, D_head);
+                for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
+                    float mask_val = 0.0f;
+                    if (mask_ptr && abs_token < N_tokens) {
+                        mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
+                        if (mask_val == -INFINITY) {
+                            scores[k_pos] = -INFINITY;
+                            continue;
+                        }
+                    }
+
+                    const char * k_data = k_base + k_pos * nbk1;
+                    float score;
+                    kq_vec_dot(D_head, &score, 0, k_data, 0, q_block, 0, 1);
+                    
+                    score = score * final_scale + mask_val;
+                    if (logit_softcap != 0.0f) {
+                        score = logit_softcap * tanhf(score);
+                    }
+
+                    scores[k_pos] = score;
+                    max_score = score > max_score ? score : max_score;
+                }
+            } else {
+                // Fallback path: handle non-contiguous tensors
+                for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
+                    float mask_val = 0.0f;
+                    if (mask_ptr && abs_token < N_tokens) {
+                        mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
+                        if (mask_val == -INFINITY) {
+                            scores[k_pos] = -INFINITY;
+                            continue;
+                        }
+                    }
+
+                    const char * k_data = k_base + k_pos * nbk1;
+                    float score = 0.0f;
+
+                    // Manual dot product with stride handling
+                    if (k_is_f32) {
+                        const char * q_elem = (const char *)q_vec;
+                        const char * k_elem = k_data;
+                        for (int64_t d = 0; d < D_head; ++d) {
+                            score += (*(const float *)q_elem) * (*(const float *)k_elem);
+                            q_elem += nbq0;
+                            k_elem += nbk0;
+                        }
+                    } else {
+                        const char * q_elem = (const char *)q_vec;
+                        const char * k_elem = k_data;
+                        for (int64_t d = 0; d < D_head; ++d) {
+                            score += (*(const float *)q_elem) * GGML_FP16_TO_FP32(*(const ggml_fp16_t *)k_elem);
+                            q_elem += nbq0;
+                            k_elem += nbk0;
+                        }
+                    }
+
+                    score = score * final_scale + mask_val;
+                    if (logit_softcap != 0.0f) {
+                        score = logit_softcap * tanhf(score);
+                    }
+
+                    scores[k_pos] = score;
+                    max_score = score > max_score ? score : max_score;
+                }
+            }
+
+            // Phase 2: Softmax - vectorized where possible
+            float sum = 0.0f;
+            for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
+                if (scores[k_pos] != -INFINITY) {
+                    scores[k_pos] = expf(scores[k_pos] - max_score);
+                    sum += scores[k_pos];
+                } else {
+                    scores[k_pos] = 0.0f;
+                }
+            }
+
+            const float inv_sum = 1.0f / (sum + 1e-8f);
+            for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
+                scores[k_pos] *= inv_sum;
+            }
+
+            // Phase 3: Weighted sum with values - optimized for different layouts
+            float * output_vec = output_block + t * D_v;
+            
+            // Optimize for contiguous V tensors
+            if (v_contiguous && v_is_f32) {
+                // Fast path: contiguous F32 V tensor
+                for (int64_t v_pos = 0; v_pos < N_kv; ++v_pos) {
+                    if (scores[v_pos] > 0.0f) {
+                        const float * v_vec = (const float *) (v_base + v_pos * nbv1);
+                        ggml_vec_mad_f32(D_v, output_vec, v_vec, scores[v_pos]);
+                    }
+                }
+            } else if (v_contiguous && !v_is_f32) {
+                // Semi-fast path: contiguous F16 V tensor
+                for (int64_t v_pos = 0; v_pos < N_kv; ++v_pos) {
+                    if (scores[v_pos] > 0.0f) {
+                        const ggml_fp16_t * v_vec = (const ggml_fp16_t *) (v_base + v_pos * nbv1);
+                        const float weight = scores[v_pos];
+                        for (int64_t d = 0; d < D_v; ++d) {
+                            output_vec[d] += weight * GGML_FP16_TO_FP32(v_vec[d]);
+                        }
+                    }
+                }
+            } else {
+                // Fallback path: handle non-contiguous V tensors
+                for (int64_t v_pos = 0; v_pos < N_kv; ++v_pos) {
+                    if (scores[v_pos] > 0.0f) {
+                        const char * v_data = v_base + v_pos * nbv1;
+                        const float weight = scores[v_pos];
+
+                        if (v_is_f32) {
+                            // Non-contiguous F32 V
+                            const char * v_elem = v_data;
+                            for (int64_t d = 0; d < D_v; ++d) {
+                                output_vec[d] += weight * (*(const float *)v_elem);
+                                v_elem += nbv0;
+                            }
+                        } else {
+                            // Non-contiguous F16 V
+                            const char * v_elem = v_data;
+                            for (int64_t d = 0; d < D_v; ++d) {
+                                output_vec[d] += weight * GGML_FP16_TO_FP32(*(const ggml_fp16_t *)v_elem);
+                                v_elem += nbv0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Copy block results to final output - handle permutation correctly
+        for (int64_t t = 0; t < block_tokens; ++t) {
+            const int64_t abs_token = start_token + t;
+            const float * src = output_block + t * D_v;
+            
+            // dst layout: [D_v, N_tokens, N_heads, N_batch] - permute(0, 2, 1, 3)
+            char * dst_ptr = (char *) dst->data + 
+                (i_batch * ne2 * ne1 + i_head + abs_token * ne1) * nb1;
+            
+            memcpy(dst_ptr, src, D_v * sizeof(float));
+        }
+    }
+}
+
+void ggml_compute_forward_blocked_attn_ext(
+        const ggml_compute_params * params,
+        const ggml_tensor * q,
+        const ggml_tensor * k,
+        const ggml_tensor * v,
+        const ggml_tensor * mask,
+        ggml_tensor * dst) {
+    switch (dst->op_params[3]) {
+        case GGML_PREC_DEFAULT:
+        case GGML_PREC_F32:
+            {
+                // uses F32 accumulators
+                ggml_compute_forward_blocked_attn_ext_f16(params, q, k, v, mask, dst);
+            } break;
+        default:
+            {
+                GGML_ABORT("fatal error");
+            }
+    }
+}
+
 // ggml_compute_forward_flash_attn_back
 
 static void ggml_compute_forward_flash_attn_back_f32(

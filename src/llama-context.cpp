@@ -43,6 +43,7 @@ llama_context::llama_context(
     cparams.embeddings       = params.embeddings;
     cparams.offload_kqv      = params.offload_kqv;
     cparams.flash_attn       = params.flash_attn;
+    cparams.blocked_attn     = params.blocked_attn;
     cparams.no_perf          = params.no_perf;
     cparams.pooling_type     = params.pooling_type;
     cparams.warmup           = false;
@@ -112,6 +113,7 @@ llama_context::llama_context(
     LLAMA_LOG_INFO("%s: n_ubatch      = %u\n",   __func__, cparams.n_ubatch);
     LLAMA_LOG_INFO("%s: causal_attn   = %d\n",   __func__, cparams.causal_attn);
     LLAMA_LOG_INFO("%s: flash_attn    = %d\n",   __func__, cparams.flash_attn);
+    LLAMA_LOG_INFO("%s: blocked_attn  = %d\n",   __func__, cparams.blocked_attn);
     LLAMA_LOG_INFO("%s: freq_base     = %.1f\n", __func__, cparams.rope_freq_base);
     LLAMA_LOG_INFO("%s: freq_scale    = %g\n",   __func__, cparams.rope_freq_scale);
 
@@ -2217,6 +2219,16 @@ llama_context * llama_init_from_model(
 
     if (ggml_is_quantized(params.type_v) && !params.flash_attn) {
         LLAMA_LOG_ERROR("%s: V cache quantization requires flash_attn\n", __func__);
+        return nullptr;
+    }
+
+    if (params.blocked_attn && model->arch == LLM_ARCH_GROK) {
+        LLAMA_LOG_WARN("%s: blocked_attn is not compatible with Grok - forcing off\n", __func__);
+        params.blocked_attn = false;
+    }
+
+    if (ggml_is_quantized(params.type_v) && !params.blocked_attn) {
+        LLAMA_LOG_ERROR("%s: V cache quantization requires blocked_attn\n", __func__);
         return nullptr;
     }
 

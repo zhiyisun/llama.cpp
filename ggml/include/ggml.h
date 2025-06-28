@@ -496,6 +496,7 @@ extern "C" {
         GGML_OP_LEAKY_RELU,
 
         GGML_OP_FLASH_ATTN_EXT,
+        GGML_OP_BLOCKED_ATTN_EXT,
         GGML_OP_FLASH_ATTN_BACK,
         GGML_OP_SSM_CONV,
         GGML_OP_SSM_SCAN,
@@ -1877,6 +1878,24 @@ extern "C" {
            struct ggml_tensor  * v,
            struct ggml_tensor  * d,
            bool                  masked);
+
+    // BlockedAttention op (ported from BlockedAttention, renamed)
+    GGML_API struct ggml_tensor * ggml_blocked_attn_ext(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * mask,
+        float                 scale,
+        float                 max_bias,
+        float                 logit_softcap);
+
+    GGML_API void ggml_blocked_attn_ext_set_prec(
+        struct ggml_tensor * a,
+        enum ggml_prec       prec);
+
+    GGML_API enum ggml_prec ggml_blocked_attn_ext_get_prec(
+        const struct ggml_tensor * a);
 
     GGML_API struct ggml_tensor * ggml_ssm_conv(
             struct ggml_context * ctx,

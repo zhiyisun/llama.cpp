@@ -1917,6 +1917,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_flash_attn_ext(params, tensor->src[0], tensor->src[1], tensor->src[2], tensor->src[3], tensor);
             } break;
+        case GGML_OP_BLOCKED_ATTN_EXT:
+            {
+                ggml_compute_forward_blocked_attn_ext(params, tensor->src[0], tensor->src[1], tensor->src[2], tensor->src[3], tensor);
+            } break;
         case GGML_OP_FLASH_ATTN_BACK:
             {
                 int32_t t = ggml_get_op_params_i32(tensor, 0);
@@ -2226,6 +2230,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_TIMESTEP_EMBEDDING:
         case GGML_OP_ARGSORT:
         case GGML_OP_FLASH_ATTN_EXT:
+        case GGML_OP_BLOCKED_ATTN_EXT:
         case GGML_OP_FLASH_ATTN_BACK:
         case GGML_OP_SSM_CONV:
         case GGML_OP_SSM_SCAN:
@@ -2744,6 +2749,17 @@ struct ggml_cplan ggml_graph_plan(
                         const int64_t ne20 = node->src[2]->ne[0]; // DV
 
                         cur = sizeof(float)*(1*ne10 + 2*ne20)*n_tasks; // 1x head size K + 2x head size V (per thread)
+                    } break;
+                case GGML_OP_BLOCKED_ATTN_EXT:
+                    {
+                        const int64_t ne10 = node->src[1]->ne[0]; // DK (head size K)
+                        const int64_t ne11 = node->src[1]->ne[1]; // sequence length
+                        const int64_t ne20 = node->src[2]->ne[0]; // DV (head size V)
+                        // BlockedAttention memory requirements:
+                        // - DV floats for output accumulator (VKQ32)
+                        // - DK floats for Q conversion buffer (Q_block)
+                        // - ne11 floats for attention scores (full sequence)
+                        cur = sizeof(float)*(ne10 + ne20 + ne11)*n_tasks; // DK + DV + seq_len (per thread)
                     } break;
                 case GGML_OP_FLASH_ATTN_BACK:
                     {
