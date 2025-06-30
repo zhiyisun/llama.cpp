@@ -7307,10 +7307,14 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     const int64_t rv3 = neq3/nev3;
 
     // Get attention parameters - use memcpy to avoid aliasing warnings
-    float scale, max_bias, logit_softcap;
-    memcpy(&scale, (const float *) dst->op_params + 0, sizeof(float));
-    memcpy(&max_bias, (const float *) dst->op_params + 1, sizeof(float));
-    memcpy(&logit_softcap, (const float *) dst->op_params + 2, sizeof(float));
+    // Avoid memcpy and strict-aliasing warning: use union for safe type-punning
+    union { float f; uint32_t u; } u_scale, u_max_bias, u_logit_softcap;
+    u_scale.u         = ((const uint32_t *)dst->op_params)[0];
+    u_max_bias.u      = ((const uint32_t *)dst->op_params)[1];
+    u_logit_softcap.u = ((const uint32_t *)dst->op_params)[2];
+    float scale         = u_scale.f;
+    float max_bias      = u_max_bias.f;
+    float logit_softcap = u_logit_softcap.f;
     
     // Pre-compute scaled value to avoid repeated division
     const float final_scale = (logit_softcap != 0.0f) ? scale / logit_softcap : scale;
@@ -7349,7 +7353,7 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     const ggml_from_float_t q_to_vec_dot = ggml_get_type_traits_cpu(k_vec_dot_type)->from_float;
     const ggml_vec_dot_t kq_vec_dot = ggml_get_type_traits_cpu(k->type)->vec_dot;
 
-    GGML_ASSERT(q_to_vec_dot && "slim_attn: unsupported K-type");
+    GGML_ASSERT(q_to_vec_dot && "blocked_attn: unsupported K-type");
 
     // Pre-determine contiguity for performance
     const bool q_contiguous = (nbq0 == sizeof(float));
@@ -7372,7 +7376,7 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     float * work_mem = (float *) params->wdata + ith * total_work_size;
     float * scores = work_mem;
     float * q_block = work_mem + N_kv;
-    float * output_block = work_mem + N_kv + M_BLOCK_SIZE * D_head;
+    // float * output_block = work_mem + N_kv + M_BLOCK_SIZE * D_head;
 
     // Process each batch and head
     const int64_t total_tasks = N_batch * N_heads * M_BLOCKS;
@@ -7413,8 +7417,7 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
         const char * k_base = (const char *) k->data + (ik_head * nbk2 + ik_batch * nbk3);
         const char * v_base = (const char *) v->data + (iv_head * nbv2 + iv_batch * nbv3);
 
-        // Clear output block - use optimized memset
-        memset(output_block, 0, block_tokens * D_v * sizeof(float));
+        // No need to clear output_block, write directly to dst
 
         // Compute attention for each token in the block
         for (int64_t t = 0; t < block_tokens; ++t) {
@@ -7537,7 +7540,12 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
             }
 
             // Phase 3: Weighted sum with values - optimized for different layouts
-            float * output_vec = output_block + t * D_v;
+            // Write directly to dst
+            // dst layout: [D_v, N_tokens, N_heads, N_batch] - permute(0, 2, 1, 3)
+            float * output_vec = (float *) dst->data + 
+                (i_batch * ne2 * ne1 + i_head + abs_token * ne1) * nb1;
+            // Clear output_vec
+            // for (int64_t d = 0; d < D_v; ++d) output_vec[d] = 0.0f;
             
             // Optimize for contiguous V tensors
             if (v_contiguous && v_is_f32) {
@@ -7585,18 +7593,7 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
                 }
             }
         }
-
-        // Copy block results to final output - handle permutation correctly
-        for (int64_t t = 0; t < block_tokens; ++t) {
-            const int64_t abs_token = start_token + t;
-            const float * src = output_block + t * D_v;
-            
-            // dst layout: [D_v, N_tokens, N_heads, N_batch] - permute(0, 2, 1, 3)
-            char * dst_ptr = (char *) dst->data + 
-                (i_batch * ne2 * ne1 + i_head + abs_token * ne1) * nb1;
-            
-            memcpy(dst_ptr, src, D_v * sizeof(float));
-        }
+        // No need to copy block results to final output, already written directly
     }
 }
 
