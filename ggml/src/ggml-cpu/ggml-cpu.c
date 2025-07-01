@@ -2755,11 +2755,25 @@ struct ggml_cplan ggml_graph_plan(
                         const int64_t ne10 = node->src[1]->ne[0]; // DK (head size K)
                         const int64_t ne11 = node->src[1]->ne[1]; // sequence length
                         const int64_t ne20 = node->src[2]->ne[0]; // DV (head size V)
-                        // BlockedAttention memory requirements:
-                        // - DV floats for output accumulator (VKQ32)
-                        // - DK floats for Q conversion buffer (Q_block)
-                        // - ne11 floats for attention scores (full sequence)
-                        cur = sizeof(float)*(ne10 + ne20 + ne11)*n_tasks; // DK + DV + seq_len (per thread)
+
+                        // Use the same block size logic as in ops.cpp
+                        int64_t target_cache_size = 1024 * 1024; // 1MB
+                        int64_t elem_size = sizeof(float);
+                        int64_t base_mem = ne10 * elem_size;
+                        int64_t score_mem = ne11 * elem_size;
+                        int64_t output_mem = ne20 * elem_size;
+                        int64_t block_size = target_cache_size / (base_mem + score_mem + output_mem);
+                        block_size = (block_size / 32) * 32;
+                        if (block_size <= 0) block_size = 32;
+                        if (block_size > ne11) block_size = ne11;
+
+                        size_t scores_size = ne11 * sizeof(float);
+                        size_t q_block_size = block_size * ne10 * sizeof(float);
+                        size_t output_block_size = block_size * ne20 * sizeof(float);
+                        size_t total_work_size = (scores_size + q_block_size + output_block_size + sizeof(float) - 1) / sizeof(float);
+
+                        // Total workspace for all threads, overstimated by x2
+                        cur = n_threads * total_work_size * sizeof(float);
                     } break;
                 case GGML_OP_FLASH_ATTN_BACK:
                     {
