@@ -2752,27 +2752,66 @@ struct ggml_cplan ggml_graph_plan(
                     } break;
                 case GGML_OP_BLOCKED_ATTN_EXT:
                     {
+                        const int64_t ne01 = node->src[0]->ne[1]; // N_tokens (query sequence length)
                         const int64_t ne10 = node->src[1]->ne[0]; // DK (head size K)
-                        const int64_t ne11 = node->src[1]->ne[1]; // sequence length
+                        const int64_t ne11 = node->src[1]->ne[1]; // N_kv (KV cache sequence length)
                         const int64_t ne20 = node->src[2]->ne[0]; // DV (head size V)
 
-                        // Use the same block size logic as in ops.cpp
+                        // To fix the assertion failure, we need to calculate workspace for the worst-case scenario.
+                        // The issue is that during inference, the KV cache can grow dynamically, but the workspace
+                        // is allocated once during planning based on the initial cache size.
+                        // 
+                        // We need to calculate workspace requirements for different scenarios and take the maximum:
+                        // 1. Current KV cache size (ne11)
+                        // 2. Maximum block size scenario (when N_kv is small, block_size can be larger)
+                        //
+                        // The workspace requirement has these components:
+                        // - scores_size: scales with N_kv 
+                        // - q_block_size: scales with block_size (inversely related to N_kv)
+                        // - output_block_size: scales with block_size (inversely related to N_kv)
+
+                        size_t max_workspace = 0;
+
+                        // Calculate workspace for current scenario
                         int64_t target_cache_size = 1024 * 1024; // 1MB
                         int64_t elem_size = sizeof(float);
                         int64_t base_mem = ne10 * elem_size;
-                        int64_t score_mem = ne11 * elem_size;
+                        int64_t score_mem_current = ne11 * elem_size;
                         int64_t output_mem = ne20 * elem_size;
-                        int64_t block_size = target_cache_size / (base_mem + score_mem + output_mem);
-                        block_size = (block_size / 32) * 32;
-                        if (block_size <= 0) block_size = 32;
-                        if (block_size > ne11) block_size = ne11;
+                        int64_t block_size_current = target_cache_size / (base_mem + score_mem_current + output_mem);
+                        block_size_current = (block_size_current / 32) * 32;
+                        if (block_size_current <= 0) block_size_current = 32;
+                        if (block_size_current > ne01) block_size_current = ne01;
 
-                        size_t scores_size = ne11 * sizeof(float);
-                        size_t q_block_size = block_size * ne10 * sizeof(float);
-                        size_t output_block_size = block_size * ne20 * sizeof(float);
-                        size_t total_work_size = (scores_size + q_block_size + output_block_size + sizeof(float) - 1) / sizeof(float);
+                        size_t scores_size_current = ne11 * sizeof(float);
+                        size_t q_block_size_current = block_size_current * ne10 * sizeof(float);
+                        size_t output_block_size_current = block_size_current * ne20 * sizeof(float);
+                        size_t total_work_size_current = (scores_size_current + q_block_size_current + output_block_size_current + sizeof(float) - 1) / sizeof(float);
 
-                        // Total workspace for all threads, overstimated by x2
+                        max_workspace = total_work_size_current;
+
+                        // Also calculate workspace for maximum block size scenario (minimum reasonable N_kv)
+                        // This handles cases where KV cache might shrink or when block_size calculation differs between planner and execution
+                        int64_t min_nkv = 64; // Minimum reasonable KV cache size
+                        int64_t score_mem_min = min_nkv * elem_size;
+                        int64_t block_size_max = target_cache_size / (base_mem + score_mem_min + output_mem);
+                        block_size_max = (block_size_max / 32) * 32;
+                        if (block_size_max <= 0) block_size_max = 32;
+                        if (block_size_max > ne01) block_size_max = ne01;
+
+                        size_t scores_size_min = min_nkv * sizeof(float);
+                        size_t q_block_size_max = block_size_max * ne10 * sizeof(float);
+                        size_t output_block_size_max = block_size_max * ne20 * sizeof(float);
+                        size_t total_work_size_max = (scores_size_min + q_block_size_max + output_block_size_max + sizeof(float) - 1) / sizeof(float);
+
+                        if (total_work_size_max > max_workspace) {
+                            max_workspace = total_work_size_max;
+                        }
+
+                        // Use the maximum workspace requirement to ensure we never run out of space
+                        size_t total_work_size = max_workspace;
+
+                        // Total workspace for all threads
                         cur = n_threads * total_work_size * sizeof(float);
                     } break;
                 case GGML_OP_FLASH_ATTN_BACK:
