@@ -7334,25 +7334,26 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     const ggml_type k_vec_dot_type = ggml_get_type_traits_cpu(k->type)->vec_dot_type;
     const ggml_from_float_t q_to_vec_dot = ggml_get_type_traits_cpu(k_vec_dot_type)->from_float;
     const ggml_vec_dot_t kq_vec_dot = ggml_get_type_traits_cpu(k->type)->vec_dot;
+    const ggml_to_float_t v_to_float = ggml_get_type_traits(v->type)->to_float;
 
-    GGML_ASSERT(q_to_vec_dot);
+    GGML_ASSERT((q_to_vec_dot) && "blocked_attn: unsupported K-type");
+    GGML_ASSERT((v->type == GGML_TYPE_F32 || v_to_float) && "blocked_attn: unsupported V-type");
 
-    const bool q_contiguous = (nbq0 == sizeof(float));
-    const bool k_contiguous = (k->type == GGML_TYPE_F32) ? (nbk0 == sizeof(float)) : (nbk0 == sizeof(ggml_fp16_t));
-    const bool k_is_f32 = (k->type == GGML_TYPE_F32);
-    const bool v_is_f32 = (v->type == GGML_TYPE_F32);
+    // input tensor rows must be contiguous
+    GGML_ASSERT(nbq0 == ggml_type_size(q->type));
+    GGML_ASSERT(nbk0 == ggml_type_size(k->type));
+    GGML_ASSERT(nbv0 == ggml_type_size(v->type));
 
-    const size_t scores_size = N_kv * sizeof(float);
-    const size_t q_block_size = M_BLOCK_SIZE * D_head * sizeof(float);
-    const size_t output_block_size = M_BLOCK_SIZE * D_v * sizeof(float);
-    const size_t total_work_size = (scores_size + q_block_size + output_block_size + sizeof(float) - 1) / sizeof(float);
+    const size_t q_block_size = D_head * ggml_type_size(k_vec_dot_type);
+    const size_t v_temp_size = (v->type == GGML_TYPE_F32) ? 0 : D_v * sizeof(float); // temp buffer for v conversion
+    const size_t total_work_size = (q_block_size + v_temp_size + sizeof(float) - 1) / sizeof(float);
     
     GGML_ASSERT(total_work_size * sizeof(float) <= params->wsize / nth);
 
     float * work_mem = (float *) params->wdata + ith * total_work_size;
     GGML_ASSERT((char *)work_mem + total_work_size * sizeof(float) <= (char *)params->wdata + params->wsize);
-    float * scores = work_mem;
-    float * q_block = work_mem + N_kv;
+    void * q_block = work_mem;
+    float * v_temp = (v->type == GGML_TYPE_F32) ? NULL : (float *)((char *)q_block + q_block_size);
 
     const int64_t total_tasks = N_batch * N_heads * M_BLOCKS;
     const int64_t tasks_per_thread = (total_tasks + nth - 1) / nth;
@@ -7401,144 +7402,79 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
 
             const float * q_vec = (const float *) (q_base + t * nbq1);
 
-            float max_score = -INFINITY;
-            
-            if (q_contiguous && k_contiguous && k_is_f32) {
-                for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
-                    float mask_val = 0.0f;
-                    if (mask_ptr && abs_token < N_tokens) {
-                        mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
-                        if (mask_val == -INFINITY) {
-                            scores[k_pos] = -INFINITY;
-                            continue;
-                        }
-                    }
-
-                    const float * k_vec = (const float *) (k_base + k_pos * nbk1);
-                    float score;
-                    ggml_vec_dot_f32(D_head, &score, 0, q_vec, 0, k_vec, 0, 1);
-                    
-                    score = score * final_scale + mask_val;
-                    if (logit_softcap != 0.0f) {
-                        score = logit_softcap * tanhf(score);
-                    }
-
-                    scores[k_pos] = score;
-                    max_score = score > max_score ? score : max_score;
-                }
-            } else if (q_contiguous && k_contiguous && !k_is_f32) {
-                q_to_vec_dot(q_vec, q_block, D_head);
-                for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
-                    float mask_val = 0.0f;
-                    if (mask_ptr && abs_token < N_tokens) {
-                        mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
-                        if (mask_val == -INFINITY) {
-                            scores[k_pos] = -INFINITY;
-                            continue;
-                        }
-                    }
-
-                    const char * k_data = k_base + k_pos * nbk1;
-                    float score;
-                    kq_vec_dot(D_head, &score, 0, k_data, 0, q_block, 0, 1);
-                    
-                    score = score * final_scale + mask_val;
-                    if (logit_softcap != 0.0f) {
-                        score = logit_softcap * tanhf(score);
-                    }
-
-                    scores[k_pos] = score;
-                    max_score = score > max_score ? score : max_score;
-                }
-            } else {
-                for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
-                    float mask_val = 0.0f;
-                    if (mask_ptr && abs_token < N_tokens) {
-                        mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
-                        if (mask_val == -INFINITY) {
-                            scores[k_pos] = -INFINITY;
-                            continue;
-                        }
-                    }
-
-                    const char * k_data = k_base + k_pos * nbk1;
-                    float score = 0.0f;
-
-                    if (k_is_f32) {
-                        const char * q_elem = (const char *)q_vec;
-                        const char * k_elem = k_data;
-                        for (int64_t d = 0; d < D_head; ++d) {
-                            score += (*(const float *)q_elem) * (*(const float *)k_elem);
-                            q_elem += nbq0;
-                            k_elem += nbk0;
-                        }
-                    } else {
-                        const char * q_elem = (const char *)q_vec;
-                        const char * k_elem = k_data;
-                        for (int64_t d = 0; d < D_head; ++d) {
-                            score += (*(const float *)q_elem) * GGML_FP16_TO_FP32(*(const ggml_fp16_t *)k_elem);
-                            q_elem += nbq0;
-                            k_elem += nbk0;
-                        }
-                    }
-
-                    score = score * final_scale + mask_val;
-                    if (logit_softcap != 0.0f) {
-                        score = logit_softcap * tanhf(score);
-                    }
-
-                    scores[k_pos] = score;
-                    max_score = score > max_score ? score : max_score;
-                }
-            }
-
-            float sum = 0.0f;
-            for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
-                if (scores[k_pos] != -INFINITY) {
-                    scores[k_pos] = expf(scores[k_pos] - max_score);
-                    sum += scores[k_pos];
-                } else {
-                    scores[k_pos] = 0.0f;
-                }
-            }
-
-            const float inv_sum = 1.0f / (sum + 1e-8f);
-            for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
-                scores[k_pos] *= inv_sum;
-            }
+            // Initialize online softmax variables
+            float M = -INFINITY; // running maximum
+            float S = 0.0f;      // running sum
 
             float * output_vec = (float *)((char *)dst->data + (i_batch*ne2*ne1 + i_head + abs_token*ne1)*nb1);
 
             size_t offset = (i_batch*ne2*ne1 + i_head + abs_token*ne1)*nb1;
             GGML_ASSERT(offset + (D_v-1)*nb0 < ggml_nbytes(dst));
 
+            // Initialize output vector to zero
             for (int64_t d = 0; d < D_v; ++d) output_vec[d] = 0.0f;
-
-            for (int64_t v_pos = 0; v_pos < N_kv; ++v_pos) {
-                if (scores[v_pos] > 0.0f) {
-                    for (int64_t d = 0; d < D_v; ++d) {
-                        size_t out_offset = ((char *)&output_vec[d]) - (char *)dst->data;
-                        GGML_ASSERT(out_offset < nb0*ne0 + nb1*ne1 + nb2*ne2 + nb3*ne3);  
-                        const char *v_data = (const char *)v->data
-                            + d * nbv0
-                            + v_pos * nbv1
-                            + iv_head * nbv2
-                            + iv_batch * nbv3;
-                        float v_elem;
-                        if (v_is_f32) {
-                            v_elem = *(const float *)v_data;
-                        } else {
-                            v_elem = GGML_FP16_TO_FP32(*(const ggml_fp16_t *)v_data);
-                        }
-                        output_vec[d] += scores[v_pos] * v_elem;
+            
+            // Convert Q to appropriate format for dot product
+            q_to_vec_dot(q_vec, q_block, D_head);
+            
+            // Online softmax / attention loop over K-V pairs
+            // ref: https://arxiv.org/pdf/2112.05682.pdf
+            for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
+                float mask_val = 0.0f;
+                if (mask_ptr && abs_token < N_tokens) {
+                    mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
+                    if (mask_val == -INFINITY) {
+                        continue;
                     }
                 }
+
+                const char * k_data = k_base + k_pos * nbk1;
+                float score;
+                kq_vec_dot(D_head, &score, 0, k_data, 0, q_block, 0, 1);
+                
+                score = score * final_scale + mask_val;
+                if (logit_softcap != 0.0f) {
+                    score = logit_softcap * tanhf(score);
+                }
+
+                const float Mold = M;
+                
+                float ms = 1.0f; // scaling factor for previous values
+                float vs = 1.0f; // post-softmax score value
+
+                if (score > M) {
+                    // New maximum found, need to scale previous accumulated values
+                    M = score;
+                    ms = expf(Mold - M);
+                    vs = 1.0f; // expf(score - M) = expf(score - score) = 1.0f
+                    
+                    // Scale previous output accumulation
+                    ggml_vec_scale_f32(D_v, output_vec, ms);
+                } else {
+                    // No new maximum
+                    vs = expf(score - M);
+                }
+
+                // Get V data and accumulate
+                const char * v_base_pos = (const char *)v->data + (k_pos * nbv1 + iv_head * nbv2 + iv_batch * nbv3);
+                
+                if (v->type == GGML_TYPE_F32) {
+                    // V is F32 and contiguous
+                    const float * v_vec = (const float *) v_base_pos;
+                    ggml_vec_mad_f32(D_v, output_vec, v_vec, vs);
+                } else {
+                    // V is not F32 but contiguous, convert to temp buffer
+                    v_to_float(v_base_pos, v_temp, D_v);
+                    ggml_vec_mad_f32(D_v, output_vec, v_temp, vs);
+                }
+
+                // Update running sum
+                S = S * ms + vs;
             }
 
-            for (int64_t d = 0; d < D_v; ++d) {
-                GGML_ASSERT(!isnan(output_vec[d]));
-                GGML_ASSERT(!isinf(output_vec[d]));
-            }
+            // Final normalization by sum
+            const float S_inv = 1.0f / S;
+            ggml_vec_scale_f32(D_v, output_vec, S_inv);
         }
     }
 }

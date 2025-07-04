@@ -1168,7 +1168,7 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_defrag(
             ggml_tensor * view_v_src;
             ggml_tensor * view_v_dst;
 
-            if (cparams.flash_attn) {
+            if (cparams.flash_attn || cparams.blocked_attn) {
                 // NOTE: the V cache is not transposed when using flash attention
                 view_v_src = ggml_view_2d(ctx, layer.v,
                         n_embd_v_gqa, nm,
