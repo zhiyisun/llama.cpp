@@ -7316,19 +7316,35 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     const float m0 = use_alibi ? powf(2.0f, -max_bias / n_head_log2) : 1.0f;
     const float m1 = use_alibi ? powf(2.0f, -(max_bias / 2.0f) / n_head_log2) : 1.0f;
 
-    auto get_optimal_block_size = [](int64_t seq_len, int64_t head_size) -> int64_t {
-        if (seq_len <= 64) return seq_len;
-        const int64_t target_cache_size = 1024 * 1024;
+    // Multi-level cache-aware blocking strategy
+    auto get_optimal_block_sizes = [](int64_t seq_len, int64_t head_size) -> std::pair<int64_t, int64_t> {
+        if (seq_len <= 32) return {seq_len, seq_len};
+        
+        // L1 cache size (32KB) for micro-blocks, L2 cache size (512KB) for macro-blocks
+        const int64_t l1_cache_size = 32 * 1024;
+        const int64_t l2_cache_size = 512 * 1024;
         const int64_t elem_size = sizeof(float);
-        const int64_t base_mem = head_size * elem_size;
-        const int64_t score_mem = seq_len * elem_size;
-        const int64_t output_mem = head_size * elem_size;
-        int64_t block_size = target_cache_size / (base_mem + score_mem + output_mem);
-        block_size = (block_size / 32) * 32;
-        return block_size > 0 ? (block_size < seq_len ? block_size : seq_len) : 32;
+        
+        // Calculate micro-block size (fits in L1 cache)
+        // Memory for micro-block: Q chunk + scores + partial output
+        const int64_t micro_mem_per_token = head_size + 1 + head_size/2;
+        int64_t micro_block = l1_cache_size / (micro_mem_per_token * elem_size);
+        micro_block = (micro_block / 8) * 8; // Align to 8 for SIMD
+        micro_block = micro_block < 8 ? 8 : (micro_block > 64 ? 64 : micro_block);
+        
+        // Calculate macro-block size (fits in L2 cache)
+        const int64_t macro_mem_per_token = head_size + 1 + head_size + 2;
+        int64_t macro_block = l2_cache_size / (macro_mem_per_token * elem_size);
+        macro_block = (macro_block / 32) * 32; // Align to 32
+        macro_block = macro_block < 32 ? 32 : (macro_block > seq_len ? seq_len : macro_block);
+        
+        // Ensure macro_block is multiple of micro_block
+        macro_block = (macro_block / micro_block) * micro_block;
+        
+        return {macro_block, micro_block};
     };
 
-    const int64_t M_BLOCK_SIZE = get_optimal_block_size(N_tokens, D_head);
+    const auto [M_BLOCK_SIZE, MICRO_BLOCK_SIZE] = get_optimal_block_sizes(N_tokens, D_head);
     const int64_t M_BLOCKS = (N_tokens + M_BLOCK_SIZE - 1) / M_BLOCK_SIZE;
 
     const ggml_type k_vec_dot_type = ggml_get_type_traits_cpu(k->type)->vec_dot_type;
@@ -7348,7 +7364,8 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     const size_t v_temp_size = (v->type == GGML_TYPE_F32) ? 0 : D_v * sizeof(float); // temp buffer for v conversion
     const size_t block_output_size = M_BLOCK_SIZE * D_v * sizeof(float);  // block output storage
     const size_t block_state_size = 2 * M_BLOCK_SIZE * sizeof(float);     // block M and S arrays
-    const size_t total_work_size = (q_block_size + v_temp_size + block_output_size + block_state_size + sizeof(float) - 1) / sizeof(float);
+    const size_t score_buffer_size = MICRO_BLOCK_SIZE * sizeof(float);    // micro-block score buffer
+    const size_t total_work_size = (q_block_size + v_temp_size + block_output_size + block_state_size + score_buffer_size + sizeof(float) - 1) / sizeof(float);
     
     GGML_ASSERT(total_work_size * sizeof(float) <= params->wsize / nth);
 
@@ -7393,43 +7410,65 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
         const char * q_base = (const char *) q->data + (start_token * nbq1 + i_head * nbq2 + i_batch * nbq3);
         const char * k_base = (const char *) k->data + (ik_head * nbk2 + ik_batch * nbk3);
 
-        // Allocate block-level temporary storage  
-        // Use work memory more efficiently for block operations
+        // Allocate hierarchical block-level temporary storage  
         float * block_output = (float *)((char *)work_mem + q_block_size + v_temp_size);
         float * block_M = block_output + block_tokens * D_v;
         float * block_S = block_M + block_tokens;
+        float * score_buffer = block_S + block_tokens;
         
-        // Initialize block-level variables
+        // Block attention algorithm following the optimized approach:
+        // 1. Initialize online softmax state (M, S) for all tokens in block
+        // 2. For each K position: compute block-level Q×K^T, then online softmax + V accumulation
+        // 3. Final normalization using online softmax state
+
+        // Step 1: Initialize online softmax state and output (vectorized)
+        // Use memset for faster zero initialization of large blocks
+        memset(block_M, 0, block_tokens * sizeof(float));
+        memset(block_S, 0, block_tokens * sizeof(float));
+        memset(block_output, 0, block_tokens * D_v * sizeof(float));
+        
+        // Set M values to -INFINITY after memset
         for (int64_t t = 0; t < block_tokens; ++t) {
             block_M[t] = -INFINITY;
-            block_S[t] = 0.0f;
-            // Initialize output vectors to zero
-            for (int64_t d = 0; d < D_v; ++d) {
-                block_output[t * D_v + d] = 0.0f;
-            }
         }
 
-        // Convert entire Q block to appropriate format for dot products
+        // Convert entire Q block with SIMD-friendly layout (cache-optimized)
         const size_t single_q_size = D_head * ggml_type_size(k_vec_dot_type);
         char * q_block_data = (char *)q_block;
-        for (int64_t t = 0; t < block_tokens; ++t) {
-            const int64_t abs_token = start_token + t;
-            if (abs_token >= N_tokens) {
-                // Fill with zeros for invalid tokens
-                memset(q_block_data + t * single_q_size, 0, single_q_size);
-                continue;
+        
+        // Process Q conversion in chunks for better cache utilization
+        for (int64_t chunk = 0; chunk < block_tokens; chunk += 8) {
+            const int64_t chunk_end = chunk + 8 < block_tokens ? chunk + 8 : block_tokens;
+            for (int64_t t = chunk; t < chunk_end; ++t) {
+                const int64_t abs_token = start_token + t;
+                if (abs_token >= N_tokens) {
+                    memset(q_block_data + t * single_q_size, 0, single_q_size);
+                    continue;
+                }
+                
+                const float * q_vec = (const float *) (q_base + t * nbq1);
+                q_to_vec_dot(q_vec, q_block_data + t * single_q_size, D_head);
             }
-            
-            const float * q_vec = (const float *) (q_base + t * nbq1);
-            q_to_vec_dot(q_vec, q_block_data + t * single_q_size, D_head);
         }
 
-        // Cache-optimized block attention: iterate by K position to maximize cache reuse
+        // Step 2: Hierarchical blocked attention with aggressive optimization
         for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
             const char * k_data = k_base + k_pos * nbk1;
             const char * v_base_pos = (const char *)v->data + (k_pos * nbv1 + iv_head * nbv2 + iv_batch * nbv3);
             
-            // Convert V once for this k_pos (cache-friendly)
+            // Multi-level prefetching for better cache utilization
+            if (k_pos + 1 < N_kv) {
+                const char * next_k = k_base + (k_pos + 1) * nbk1;
+                const char * next_v = (const char *)v->data + ((k_pos + 1) * nbv1 + iv_head * nbv2 + iv_batch * nbv3);
+                __builtin_prefetch(next_k, 0, 3);      // Prefetch to L3
+                __builtin_prefetch(next_v, 0, 3);      // Prefetch to L3
+            }
+            if (k_pos + 4 < N_kv) {
+                const char * far_k = k_base + (k_pos + 4) * nbk1;
+                __builtin_prefetch(far_k, 0, 1);       // Prefetch to L1 with longer lead
+            }
+            
+            // Convert V once for this k_pos with optimized path
             const float * v_vec;
             if (v->type == GGML_TYPE_F32) {
                 v_vec = (const float *)v_base_pos;
@@ -7438,70 +7477,145 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
                 v_vec = v_temp;
             }
             
-            // Process entire block for this K position (maximizes cache reuse)
-            for (int64_t t = 0; t < block_tokens; ++t) {
-                const int64_t abs_token = start_token + t;
-                if (abs_token >= N_tokens) {
-                    continue;
+            // Precompute mask and scaling factors
+            float mask_val = 0.0f;
+            bool mask_is_neg_inf = false;
+            if (mask_ptr) {
+                mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
+                mask_is_neg_inf = (mask_val == -INFINITY);
+            }
+            
+            // Skip computation if mask makes all scores -inf
+            if (mask_is_neg_inf) continue;
+            
+            // Hierarchical processing: macro-blocks -> micro-blocks
+            for (int64_t macro_start = 0; macro_start < block_tokens; macro_start += MICRO_BLOCK_SIZE) {
+                const int64_t macro_end = macro_start + MICRO_BLOCK_SIZE < block_tokens ? 
+                                         macro_start + MICRO_BLOCK_SIZE : block_tokens;
+                const int64_t micro_size = macro_end - macro_start;
+                
+                // Prefetch next micro-block's Q data
+                if (macro_end < block_tokens) {
+                    __builtin_prefetch(q_block_data + macro_end * single_q_size, 0, 2);
                 }
                 
-                // Apply mask first
-                float mask_val = 0.0f;
-                if (mask_ptr && abs_token < N_tokens) {
-                    mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
-                    if (mask_val == -INFINITY) {
-                        continue;
+                // Vectorized Q×K^T computation for micro-block (cache-hot computation)
+                if (micro_size >= 8) {
+                    // Process 8 tokens at a time for better SIMD utilization
+                    for (int64_t t = 0; t < micro_size; t += 8) {
+                        const int64_t chunk_end = t + 8 < micro_size ? t + 8 : micro_size;
+                        
+                        // Batch compute scores for better instruction throughput
+                        for (int64_t i = t; i < chunk_end; ++i) {
+                            const int64_t block_t = macro_start + i;
+                            const int64_t abs_token = start_token + block_t;
+                            
+                            if (abs_token >= N_tokens) {
+                                score_buffer[i] = -INFINITY;
+                                continue;
+                            }
+                            
+                            // Optimized Q*K^T with minimal overhead
+                            float score;
+                            kq_vec_dot(D_head, &score, 0, k_data, 0, 
+                                      q_block_data + block_t * single_q_size, 0, 1);
+                            
+                            // Fused scaling and masking
+                            score = score * final_scale + mask_val;
+                            if (logit_softcap != 0.0f) {
+                                score = logit_softcap * tanhf(score);
+                            }
+                            
+                            score_buffer[i] = score;
+                        }
+                        
+                        // Fused online softmax and V accumulation (cache-efficient)
+                        for (int64_t i = t; i < chunk_end; ++i) {
+                            const int64_t block_t = macro_start + i;
+                            const int64_t abs_token = start_token + block_t;
+                            
+                            if (abs_token >= N_tokens || score_buffer[i] == -INFINITY) {
+                                continue;
+                            }
+                            
+                            const float score = score_buffer[i];
+                            float * output_ptr = &block_output[block_t * D_v];
+                            
+                            // Optimized online softmax with reduced branching
+                            const float Mold = block_M[block_t];
+                            const float score_diff = score - Mold;
+                            
+                            if (score_diff > 0.0f) {
+                                // New maximum - efficient update
+                                const float ms = expf(-score_diff);
+                                block_M[block_t] = score;
+                                block_S[block_t] = block_S[block_t] * ms + 1.0f;
+                                
+                                // Vectorized rescaling and accumulation in one pass
+                                ggml_vec_scale_f32(D_v, output_ptr, ms);
+                                ggml_vec_mad_f32(D_v, output_ptr, v_vec, 1.0f);
+                            } else {
+                                // No new maximum - direct accumulation
+                                const float vs = expf(score_diff);
+                                block_S[block_t] += vs;
+                                ggml_vec_mad_f32(D_v, output_ptr, v_vec, vs);
+                            }
+                        }
+                    }
+                } else {
+                    // Handle remaining tokens (< 8) with simpler loop
+                    for (int64_t i = 0; i < micro_size; ++i) {
+                        const int64_t block_t = macro_start + i;
+                        const int64_t abs_token = start_token + block_t;
+                        
+                        if (abs_token >= N_tokens) continue;
+                        
+                        float score;
+                        kq_vec_dot(D_head, &score, 0, k_data, 0, 
+                                  q_block_data + block_t * single_q_size, 0, 1);
+                        score = score * final_scale + mask_val;
+                        if (logit_softcap != 0.0f) {
+                            score = logit_softcap * tanhf(score);
+                        }
+                        
+                        float * output_ptr = &block_output[block_t * D_v];
+                        const float Mold = block_M[block_t];
+                        const float score_diff = score - Mold;
+                        
+                        if (score_diff > 0.0f) {
+                            const float ms = expf(-score_diff);
+                            block_M[block_t] = score;
+                            block_S[block_t] = block_S[block_t] * ms + 1.0f;
+                            ggml_vec_scale_f32(D_v, output_ptr, ms);
+                            ggml_vec_mad_f32(D_v, output_ptr, v_vec, 1.0f);
+                        } else {
+                            const float vs = expf(score_diff);
+                            block_S[block_t] += vs;
+                            ggml_vec_mad_f32(D_v, output_ptr, v_vec, vs);
+                        }
                     }
                 }
-                
-                // Compute Q*K^T for this token-K pair
-                float score;
-                kq_vec_dot(D_head, &score, 0, k_data, 0, q_block_data + t * single_q_size, 0, 1);
-                
-                // Apply scaling and mask
-                score = score * final_scale + mask_val;
-                if (logit_softcap != 0.0f) {
-                    score = logit_softcap * tanhf(score);
-                }
-                
-                // Online softmax update
-                const float Mold = block_M[t];
-                float ms = 1.0f;
-                float vs = 1.0f;
-                
-                if (score > block_M[t]) {
-                    // New maximum found
-                    block_M[t] = score;
-                    ms = expf(Mold - block_M[t]);
-                    vs = 1.0f;
-                    
-                    // Scale previous accumulation
-                    ggml_vec_scale_f32(D_v, &block_output[t * D_v], ms);
-                    block_S[t] = block_S[t] * ms + vs;
-                } else {
-                    // No new maximum
-                    vs = expf(score - block_M[t]);
-                    block_S[t] = block_S[t] + vs;
-                }
-                
-                // Accumulate weighted V (cache-friendly since V is already loaded)
-                ggml_vec_mad_f32(D_v, &block_output[t * D_v], v_vec, vs);
             }
         }
 
-        // Final normalization and copy to output
-        for (int64_t t = 0; t < block_tokens; ++t) {
-            const int64_t abs_token = start_token + t;
-            if (abs_token >= N_tokens) {
-                continue;
-            }
+        // Final normalization and copy to output (cache-optimized)
+        // Process in chunks for better cache utilization
+        for (int64_t chunk = 0; chunk < block_tokens; chunk += 8) {
+            const int64_t chunk_end = chunk + 8 < block_tokens ? chunk + 8 : block_tokens;
             
-            float * output_vec = (float *)((char *)dst->data + (i_batch*ne2*ne1 + i_head + abs_token*ne1)*nb1);
-            
-            // Normalize by sum
-            const float S_inv = 1.0f / block_S[t];
-            for (int64_t d = 0; d < D_v; ++d) {
-                output_vec[d] = block_output[t * D_v + d] * S_inv;
+            for (int64_t t = chunk; t < chunk_end; ++t) {
+                const int64_t abs_token = start_token + t;
+                if (abs_token >= N_tokens || block_S[t] == 0.0f) {
+                    continue;
+                }
+                
+                float * output_vec = (float *)((char *)dst->data + (i_batch*ne2*ne1 + i_head + abs_token*ne1)*nb1);
+                float * input_vec = &block_output[t * D_v];
+                
+                // Vectorized normalization and copy in one pass
+                const float S_inv = 1.0f / block_S[t];
+                ggml_vec_scale_f32(D_v, input_vec, S_inv);
+                memcpy(output_vec, input_vec, D_v * sizeof(float));
             }
         }
     }
