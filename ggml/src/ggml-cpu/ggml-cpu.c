@@ -2753,18 +2753,37 @@ struct ggml_cplan ggml_graph_plan(
                 case GGML_OP_BLOCKED_ATTN_EXT:
                     {
                         const int64_t ne10 = node->src[1]->ne[0]; // DK (head size K)
+                        const int64_t ne11 = node->src[1]->ne[1]; // N_kv
                         const int64_t ne20 = node->src[2]->ne[0]; // DV (head size V)
+                        const int64_t neq1 = node->src[0]->ne[1]; // N_tokens
+                        
+                        // Calculate optimal block size (same logic as in ops.cpp)
+                        int64_t M_BLOCK_SIZE;
+                        if (neq1 <= 64) {
+                            M_BLOCK_SIZE = neq1;
+                        } else {
+                            const int64_t target_cache_size = 1024 * 1024;
+                            const int64_t elem_size = sizeof(float);
+                            const int64_t base_mem = ne10 * elem_size;
+                            const int64_t score_mem = neq1 * elem_size;
+                            const int64_t output_mem = ne10 * elem_size;
+                            int64_t block_size = target_cache_size / (base_mem + score_mem + output_mem);
+                            block_size = (block_size / 32) * 32;
+                            M_BLOCK_SIZE = block_size > 0 ? (block_size < neq1 ? block_size : neq1) : 32;
+                        }
                         
                         // Calculate workspace size matching ggml_compute_forward_blocked_attn_ext_f16
-                        // With online softmax, we no longer need to store all scores
-                        
-                        // Assume worst case for q_block_size (FP16 type size)
-                        const size_t q_block_size = ne10 * sizeof(ggml_fp16_t);
+                        // Q block size for entire block (not just single token)
+                        const size_t q_block_size = M_BLOCK_SIZE * ne10 * sizeof(ggml_fp16_t);
                         
                         // V temp buffer size - assume worst case (V is not F32)
                         const size_t v_temp_size = ne20 * sizeof(float);
                         
-                        const size_t total_work_size = (q_block_size + v_temp_size + sizeof(float) - 1) / sizeof(float);
+                        // Block-level storage requirements (no longer need block_scores)
+                        const size_t block_output_size = M_BLOCK_SIZE * ne20 * sizeof(float); // block output storage
+                        const size_t block_state_size = 2 * M_BLOCK_SIZE * sizeof(float);    // block M and S arrays
+                        
+                        const size_t total_work_size = (q_block_size + v_temp_size + block_output_size + block_state_size + sizeof(float) - 1) / sizeof(float);
                         
                         // Total workspace for all threads
                         cur = n_threads * total_work_size * sizeof(float);

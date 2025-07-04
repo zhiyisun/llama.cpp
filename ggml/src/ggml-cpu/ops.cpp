@@ -7344,9 +7344,11 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     GGML_ASSERT(nbk0 == ggml_type_size(k->type));
     GGML_ASSERT(nbv0 == ggml_type_size(v->type));
 
-    const size_t q_block_size = D_head * ggml_type_size(k_vec_dot_type);
+    const size_t q_block_size = M_BLOCK_SIZE * D_head * ggml_type_size(k_vec_dot_type);
     const size_t v_temp_size = (v->type == GGML_TYPE_F32) ? 0 : D_v * sizeof(float); // temp buffer for v conversion
-    const size_t total_work_size = (q_block_size + v_temp_size + sizeof(float) - 1) / sizeof(float);
+    const size_t block_output_size = M_BLOCK_SIZE * D_v * sizeof(float);  // block output storage
+    const size_t block_state_size = 2 * M_BLOCK_SIZE * sizeof(float);     // block M and S arrays
+    const size_t total_work_size = (q_block_size + v_temp_size + block_output_size + block_state_size + sizeof(float) - 1) / sizeof(float);
     
     GGML_ASSERT(total_work_size * sizeof(float) <= params->wsize / nth);
 
@@ -7391,35 +7393,59 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
         const char * q_base = (const char *) q->data + (start_token * nbq1 + i_head * nbq2 + i_batch * nbq3);
         const char * k_base = (const char *) k->data + (ik_head * nbk2 + ik_batch * nbk3);
 
+        // Allocate block-level temporary storage  
+        // Use work memory more efficiently for block operations
+        float * block_output = (float *)((char *)work_mem + q_block_size + v_temp_size);
+        float * block_M = block_output + block_tokens * D_v;
+        float * block_S = block_M + block_tokens;
+        
+        // Initialize block-level variables
+        for (int64_t t = 0; t < block_tokens; ++t) {
+            block_M[t] = -INFINITY;
+            block_S[t] = 0.0f;
+            // Initialize output vectors to zero
+            for (int64_t d = 0; d < D_v; ++d) {
+                block_output[t * D_v + d] = 0.0f;
+            }
+        }
+
+        // Convert entire Q block to appropriate format for dot products
+        const size_t single_q_size = D_head * ggml_type_size(k_vec_dot_type);
+        char * q_block_data = (char *)q_block;
         for (int64_t t = 0; t < block_tokens; ++t) {
             const int64_t abs_token = start_token + t;
-
-            GGML_ASSERT(abs_token >= 0 && abs_token < N_tokens);
-
             if (abs_token >= N_tokens) {
+                // Fill with zeros for invalid tokens
+                memset(q_block_data + t * single_q_size, 0, single_q_size);
                 continue;
             }
-
+            
             const float * q_vec = (const float *) (q_base + t * nbq1);
+            q_to_vec_dot(q_vec, q_block_data + t * single_q_size, D_head);
+        }
 
-            // Initialize online softmax variables
-            float M = -INFINITY; // running maximum
-            float S = 0.0f;      // running sum
-
-            float * output_vec = (float *)((char *)dst->data + (i_batch*ne2*ne1 + i_head + abs_token*ne1)*nb1);
-
-            size_t offset = (i_batch*ne2*ne1 + i_head + abs_token*ne1)*nb1;
-            GGML_ASSERT(offset + (D_v-1)*nb0 < ggml_nbytes(dst));
-
-            // Initialize output vector to zero
-            for (int64_t d = 0; d < D_v; ++d) output_vec[d] = 0.0f;
+        // Cache-optimized block attention: iterate by K position to maximize cache reuse
+        for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
+            const char * k_data = k_base + k_pos * nbk1;
+            const char * v_base_pos = (const char *)v->data + (k_pos * nbv1 + iv_head * nbv2 + iv_batch * nbv3);
             
-            // Convert Q to appropriate format for dot product
-            q_to_vec_dot(q_vec, q_block, D_head);
+            // Convert V once for this k_pos (cache-friendly)
+            const float * v_vec;
+            if (v->type == GGML_TYPE_F32) {
+                v_vec = (const float *)v_base_pos;
+            } else {
+                v_to_float(v_base_pos, v_temp, D_v);
+                v_vec = v_temp;
+            }
             
-            // Online softmax / attention loop over K-V pairs
-            // ref: https://arxiv.org/pdf/2112.05682.pdf
-            for (int64_t k_pos = 0; k_pos < N_kv; ++k_pos) {
+            // Process entire block for this K position (maximizes cache reuse)
+            for (int64_t t = 0; t < block_tokens; ++t) {
+                const int64_t abs_token = start_token + t;
+                if (abs_token >= N_tokens) {
+                    continue;
+                }
+                
+                // Apply mask first
                 float mask_val = 0.0f;
                 if (mask_ptr && abs_token < N_tokens) {
                     mask_val = slope * GGML_FP16_TO_FP32(mask_ptr[k_pos]);
@@ -7427,54 +7453,56 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
                         continue;
                     }
                 }
-
-                const char * k_data = k_base + k_pos * nbk1;
-                float score;
-                kq_vec_dot(D_head, &score, 0, k_data, 0, q_block, 0, 1);
                 
+                // Compute Q*K^T for this token-K pair
+                float score;
+                kq_vec_dot(D_head, &score, 0, k_data, 0, q_block_data + t * single_q_size, 0, 1);
+                
+                // Apply scaling and mask
                 score = score * final_scale + mask_val;
                 if (logit_softcap != 0.0f) {
                     score = logit_softcap * tanhf(score);
                 }
-
-                const float Mold = M;
                 
-                float ms = 1.0f; // scaling factor for previous values
-                float vs = 1.0f; // post-softmax score value
-
-                if (score > M) {
-                    // New maximum found, need to scale previous accumulated values
-                    M = score;
-                    ms = expf(Mold - M);
-                    vs = 1.0f; // expf(score - M) = expf(score - score) = 1.0f
+                // Online softmax update
+                const float Mold = block_M[t];
+                float ms = 1.0f;
+                float vs = 1.0f;
+                
+                if (score > block_M[t]) {
+                    // New maximum found
+                    block_M[t] = score;
+                    ms = expf(Mold - block_M[t]);
+                    vs = 1.0f;
                     
-                    // Scale previous output accumulation
-                    ggml_vec_scale_f32(D_v, output_vec, ms);
+                    // Scale previous accumulation
+                    ggml_vec_scale_f32(D_v, &block_output[t * D_v], ms);
+                    block_S[t] = block_S[t] * ms + vs;
                 } else {
                     // No new maximum
-                    vs = expf(score - M);
+                    vs = expf(score - block_M[t]);
+                    block_S[t] = block_S[t] + vs;
                 }
-
-                // Get V data and accumulate
-                const char * v_base_pos = (const char *)v->data + (k_pos * nbv1 + iv_head * nbv2 + iv_batch * nbv3);
                 
-                if (v->type == GGML_TYPE_F32) {
-                    // V is F32 and contiguous
-                    const float * v_vec = (const float *) v_base_pos;
-                    ggml_vec_mad_f32(D_v, output_vec, v_vec, vs);
-                } else {
-                    // V is not F32 but contiguous, convert to temp buffer
-                    v_to_float(v_base_pos, v_temp, D_v);
-                    ggml_vec_mad_f32(D_v, output_vec, v_temp, vs);
-                }
-
-                // Update running sum
-                S = S * ms + vs;
+                // Accumulate weighted V (cache-friendly since V is already loaded)
+                ggml_vec_mad_f32(D_v, &block_output[t * D_v], v_vec, vs);
             }
+        }
 
-            // Final normalization by sum
-            const float S_inv = 1.0f / S;
-            ggml_vec_scale_f32(D_v, output_vec, S_inv);
+        // Final normalization and copy to output
+        for (int64_t t = 0; t < block_tokens; ++t) {
+            const int64_t abs_token = start_token + t;
+            if (abs_token >= N_tokens) {
+                continue;
+            }
+            
+            float * output_vec = (float *)((char *)dst->data + (i_batch*ne2*ne1 + i_head + abs_token*ne1)*nb1);
+            
+            // Normalize by sum
+            const float S_inv = 1.0f / block_S[t];
+            for (int64_t d = 0; d < D_v; ++d) {
+                output_vec[d] = block_output[t * D_v + d] * S_inv;
+            }
         }
     }
 }
