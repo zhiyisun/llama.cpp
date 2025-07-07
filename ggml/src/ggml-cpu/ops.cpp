@@ -7316,32 +7316,28 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     const float m0 = use_alibi ? powf(2.0f, -max_bias / n_head_log2) : 1.0f;
     const float m1 = use_alibi ? powf(2.0f, -(max_bias / 2.0f) / n_head_log2) : 1.0f;
 
-    // Multi-level cache-aware blocking strategy
+    // L2 cache-aware blocking strategy
     auto get_optimal_block_sizes = [](int64_t seq_len, int64_t head_size) -> std::pair<int64_t, int64_t> {
-        if (seq_len <= 32) return {seq_len, seq_len};
+        if (seq_len <= 32) return {seq_len, 32};
         
-        // L1 cache size (32KB) for micro-blocks, L2 cache size (512KB) for macro-blocks
-        const int64_t l1_cache_size = 32 * 1024;
-        const int64_t l2_cache_size = 512 * 1024;
+        // L2 cache size (2MB) for both macro and micro blocks
+        const int64_t l2_cache_size = 2 * 1024 * 1024;
         const int64_t elem_size = sizeof(float);
         
-        // Calculate micro-block size (fits in L1 cache)
-        // Memory for micro-block: Q chunk + scores + partial output
-        const int64_t micro_mem_per_token = head_size + 1 + head_size/2;
-        int64_t micro_block = l1_cache_size / (micro_mem_per_token * elem_size);
-        micro_block = (micro_block / 8) * 8; // Align to 8 for SIMD
-        micro_block = micro_block < 8 ? 8 : (micro_block > 64 ? 64 : micro_block);
+        // Calculate block size that fits comfortably in L2 cache
+        // Memory per token: Q chunk + scores + partial output + state
+        const int64_t mem_per_token = head_size + 1 + head_size + 2;
+        int64_t block_size = l2_cache_size / (mem_per_token * elem_size);
+        block_size = (block_size / 32) * 32; // Align to 32 for better vectorization
+        block_size = block_size < 32 ? 32 : (block_size > seq_len ? seq_len : block_size);
         
-        // Calculate macro-block size (fits in L2 cache)
-        const int64_t macro_mem_per_token = head_size + 1 + head_size + 2;
-        int64_t macro_block = l2_cache_size / (macro_mem_per_token * elem_size);
-        macro_block = (macro_block / 32) * 32; // Align to 32
-        macro_block = macro_block < 32 ? 32 : (macro_block > seq_len ? seq_len : macro_block);
+        // Use a reasonable micro-block size for inner loop optimization
+        // Aim for good SIMD utilization without exceeding L2 capacity
+        int64_t micro_block = block_size < 128 ? block_size : 128;
+        micro_block = (micro_block / 32) * 32; // Align to 32
+        micro_block = micro_block < 32 ? 32 : micro_block;
         
-        // Ensure macro_block is multiple of micro_block
-        macro_block = (macro_block / micro_block) * micro_block;
-        
-        return {macro_block, micro_block};
+        return {block_size, micro_block};
     };
 
     const auto [M_BLOCK_SIZE, MICRO_BLOCK_SIZE] = get_optimal_block_sizes(N_tokens, D_head);
@@ -7364,7 +7360,7 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     const size_t v_temp_size = (v->type == GGML_TYPE_F32) ? 0 : D_v * sizeof(float); // temp buffer for v conversion
     const size_t block_output_size = M_BLOCK_SIZE * D_v * sizeof(float);  // block output storage
     const size_t block_state_size = 2 * M_BLOCK_SIZE * sizeof(float);     // block M and S arrays
-    const size_t score_buffer_size = MICRO_BLOCK_SIZE * sizeof(float);    // micro-block score buffer
+    const size_t score_buffer_size = MICRO_BLOCK_SIZE * sizeof(float);    // L2-sized score buffer
     const size_t total_work_size = (q_block_size + v_temp_size + block_output_size + block_state_size + score_buffer_size + sizeof(float) - 1) / sizeof(float);
     
     GGML_ASSERT(total_work_size * sizeof(float) <= params->wsize / nth);
@@ -7456,16 +7452,12 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
             const char * k_data = k_base + k_pos * nbk1;
             const char * v_base_pos = (const char *)v->data + (k_pos * nbv1 + iv_head * nbv2 + iv_batch * nbv3);
             
-            // Multi-level prefetching for better cache utilization
+            // L2 cache-aware prefetching for better memory utilization
             if (k_pos + 1 < N_kv) {
                 const char * next_k = k_base + (k_pos + 1) * nbk1;
                 const char * next_v = (const char *)v->data + ((k_pos + 1) * nbv1 + iv_head * nbv2 + iv_batch * nbv3);
-                __builtin_prefetch(next_k, 0, 3);      // Prefetch to L3
-                __builtin_prefetch(next_v, 0, 3);      // Prefetch to L3
-            }
-            if (k_pos + 4 < N_kv) {
-                const char * far_k = k_base + (k_pos + 4) * nbk1;
-                __builtin_prefetch(far_k, 0, 1);       // Prefetch to L1 with longer lead
+                __builtin_prefetch(next_k, 0, 2);      // Prefetch to L2
+                __builtin_prefetch(next_v, 0, 2);      // Prefetch to L2
             }
             
             // Convert V once for this k_pos with optimized path
@@ -7488,18 +7480,18 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
             // Skip computation if mask makes all scores -inf
             if (mask_is_neg_inf) continue;
             
-            // Hierarchical processing: macro-blocks -> micro-blocks
+            // L2 cache-optimized processing: process in blocks that fit in L2 cache
             for (int64_t macro_start = 0; macro_start < block_tokens; macro_start += MICRO_BLOCK_SIZE) {
                 const int64_t macro_end = macro_start + MICRO_BLOCK_SIZE < block_tokens ? 
                                          macro_start + MICRO_BLOCK_SIZE : block_tokens;
                 const int64_t micro_size = macro_end - macro_start;
                 
-                // Prefetch next micro-block's Q data
+                // Prefetch next block's Q data for L2 cache optimization
                 if (macro_end < block_tokens) {
                     __builtin_prefetch(q_block_data + macro_end * single_q_size, 0, 2);
                 }
                 
-                // Vectorized Q×K^T computation for micro-block (cache-hot computation)
+                // Vectorized Q×K^T computation optimized for L2 cache utilization
                 if (micro_size >= 8) {
                     // Process 8 tokens at a time for better SIMD utilization
                     for (int64_t t = 0; t < micro_size; t += 8) {
@@ -7598,7 +7590,7 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
             }
         }
 
-        // Final normalization and copy to output (cache-optimized)
+        // Final normalization and copy to output (L2 cache-optimized)
         // Process in chunks for better cache utilization
         for (int64_t chunk = 0; chunk < block_tokens; chunk += 8) {
             const int64_t chunk_end = chunk + 8 < block_tokens ? chunk + 8 : block_tokens;
