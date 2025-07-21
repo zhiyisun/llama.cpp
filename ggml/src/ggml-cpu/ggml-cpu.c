@@ -2757,87 +2757,50 @@ struct ggml_cplan ggml_graph_plan(
                         const int64_t neq1 = node->src[0]->ne[1]; // N_tokens
                         const int64_t nek1 = node->src[1]->ne[1]; // N_kv (KV cache size)
                         
-                        // Calculate optimal block sizes using the same logic as ops.cpp
-                        int64_t M_BLOCK_SIZE, MICRO_BLOCK_SIZE;
-                        if (neq1 <= 32) {
-                            M_BLOCK_SIZE = neq1;
-                            MICRO_BLOCK_SIZE = neq1;
+                        // xFT's cache-optimized block sizing strategy (matches ops.cpp getMBlockSize)
+                        int64_t M_BLOCK_SIZE;
+                        if (neq1 == 1) {
+                            M_BLOCK_SIZE = 1;  // Special case for decode
                         } else {
-                            const int64_t l2_cache_size = 2 * 1024 * 1024;  // 2MB L2 cache
-                            const int64_t elem_size = sizeof(float);
+                            const int64_t l2CacheSize = 2 * 1024 * 1024;  // 2MB L2 cache
+                            const int64_t qkvSize = neq1 * ne10;
+                            const int64_t scoreSize = neq1 * neq1;
                             
-                            // Calculate optimal block size for L2 cache utilization
-                            // Memory per block: Q_block + temp_storage + running_state
-                            // For online softmax we need: Q(block×head) + M(block) + S(block) + output(block×head)
-                            const int64_t mem_per_token = 2 * ne10 + 2;  // Q + output + M + S
+                            // xFT's cache calculation: ensure all accessed data fits in L2
+                            // (qSize/splits) + kSize + (scoreSize/splits) + vSize + (outSize/splits) <= cacheSize
+                            int64_t capacity = l2CacheSize / sizeof(float);
+                            int64_t splits = 1;
                             
-                            // Calculate maximum block size that fits in L2 cache
-                            int64_t max_block = l2_cache_size / (mem_per_token * elem_size);
-                            max_block = (max_block / 32) * 32;  // Align to 32 (XFT's optimal size)
+                            if (capacity <= 2 * qkvSize) {
+                                splits = 1;  // Always cannot cache accessed data
+                            } else {
+                                splits = (int64_t)ceil((2.0f * qkvSize + scoreSize) / (capacity - 2 * qkvSize));
+                            }
                             
-                            // For 2MB cache and typical head_size=128: max_block ≈ 2048 tokens
-                            // This allows processing much larger blocks than XFT's fixed 32-token blocks
-                            int64_t macro_block = max_block;
-                            if (macro_block > neq1) macro_block = neq1;
-                            if (macro_block < 32) macro_block = 32;
+                            if (splits <= 0) splits = 1;
+                            M_BLOCK_SIZE = (neq1 + splits - 1) / splits;
                             
-                            // Micro-block size for inner loop vectorization
-                            int64_t micro_block = 32;  // XFT's proven micro-block size
-                            if (macro_block < micro_block) micro_block = macro_block;
-                            
-                            M_BLOCK_SIZE = macro_block;
-                            MICRO_BLOCK_SIZE = micro_block;
+                            if (M_BLOCK_SIZE <= 0) {
+                                M_BLOCK_SIZE = neq1 > 6 ? 6 : neq1;  // xFT's minVal default
+                            } else if (M_BLOCK_SIZE > neq1) {
+                                M_BLOCK_SIZE = neq1;
+                            }
                         }
                         
-                        // Phase detection: decode vs prefill phase
-                        // Decode phase: small input sequence (1-4 tokens), large KV cache
-                        // Prefill phase: large input sequence, small/no KV cache
-                        const bool is_decode_phase = (neq1 <= 4 && nek1 > 64);
+                        // Limit block size to prevent excessive memory usage (matches ops.cpp)
+                        const int64_t MAX_BLOCK_SIZE = 64;
+                        const int64_t ACTUAL_M_BLOCK_SIZE = M_BLOCK_SIZE < MAX_BLOCK_SIZE ? M_BLOCK_SIZE : MAX_BLOCK_SIZE;
                         
-                        size_t workspace_size = 0;
+                        // Memory-efficient workspace calculation
+                        // Components: score_buffer + q_block + v_temp
+                        const int64_t scoreStride = (nek1 + 15) / 16 * 16;
+                        const size_t score_buffer_size = ACTUAL_M_BLOCK_SIZE * scoreStride * sizeof(float);
+                        const size_t q_block_size = ACTUAL_M_BLOCK_SIZE * ne10 * ggml_type_size(node->src[1]->type);
+                        const size_t v_temp_size = ne20 * sizeof(float);  // For V type conversion if needed
                         
-                        if (is_decode_phase) {
-                            // Decode phase: XFT's head-parallel approach
-                            // Each thread needs: N_tokens * N_kv * sizeof(float) for score buffer
-                            workspace_size = neq1 * nek1 * sizeof(float);
-                        } else {
-                            // Prefill phase: Multiple algorithm options
-                            
-                            // XFT prefill option: Large score matrix + Q block + V temp + block output
-                            // Note: This only accounts for workspace memory. K,V tensors are streamed
-                            // from memory with prefetching, not loaded entirely into L2 cache.
-                            // Q block uses K tensor's vec_dot_type (e.g., BF16, F16, etc.)
-                            const size_t xft_q_block_size = M_BLOCK_SIZE * ne10 * ggml_type_size(node->src[1]->type);
-                            const size_t xft_v_temp_size = ne20 * sizeof(float); // assume worst case (V is not F32)
-                            const size_t xft_score_matrix_size = M_BLOCK_SIZE * nek1 * sizeof(float);
-                            const size_t xft_block_output_size = M_BLOCK_SIZE * ne20 * sizeof(float);
-                            const size_t xft_total_size = xft_q_block_size + xft_v_temp_size + 
-                                                         xft_score_matrix_size + xft_block_output_size;
-                            
-                            // Online softmax fallback option: Q block + V temp + block output + block state + micro scores
-                            const size_t online_q_block_size = M_BLOCK_SIZE * ne10 * ggml_type_size(node->src[1]->type);
-                            const size_t online_v_temp_size = ne20 * sizeof(float); // assume worst case (V is not F32)
-                            const size_t online_block_output_size = M_BLOCK_SIZE * ne20 * sizeof(float);
-                            const size_t online_block_state_size = 2 * M_BLOCK_SIZE * sizeof(float); // M and S arrays
-                            const size_t online_score_buffer_size = MICRO_BLOCK_SIZE * sizeof(float); // micro-block score buffer
-                            const size_t online_total_size = online_q_block_size + online_v_temp_size + 
-                                                            online_block_output_size + online_block_state_size + 
-                                                            online_score_buffer_size;
-                            
-                            // Check if XFT approach fits in L2 cache
-                            const size_t xft_memory_requirement = xft_score_matrix_size + M_BLOCK_SIZE * (ne10 + ne20) * sizeof(float);
-                            const bool can_use_xft_prefill = (xft_memory_requirement <= 2 * 1024 * 1024) && (M_BLOCK_SIZE >= 32);
-                            
-                            // Choose the larger of the two options to ensure sufficient workspace
-                            workspace_size = can_use_xft_prefill ? 
-                                           (xft_total_size > online_total_size ? xft_total_size : online_total_size) :
-                                           online_total_size;
-                        }
+                        const size_t total_work_size = (score_buffer_size + q_block_size + v_temp_size + sizeof(float) - 1) / sizeof(float);
                         
-                        // Round up to float boundary and add per-thread allocation
-                        const size_t total_work_size = (workspace_size + sizeof(float) - 1) / sizeof(float);
-                        
-                        // Total workspace for all threads
+                        // Total workspace for all threads (each thread gets its own workspace)
                         cur = n_threads * total_work_size * sizeof(float);
                     } break;
                 case GGML_OP_FLASH_ATTN_BACK:
