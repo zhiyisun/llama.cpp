@@ -7382,7 +7382,6 @@ static void ggml_compute_forward_blocked_attn_ext_f16(
     };
 
     const int64_t M_BLOCK_SIZE = getMBlockSize(N_tokens, D_head);
-    const int64_t M_BLOCKS = (N_tokens + M_BLOCK_SIZE - 1) / M_BLOCK_SIZE;
 
     const ggml_type k_vec_dot_type = ggml_get_type_traits_cpu(k->type)->vec_dot_type;
     const ggml_from_float_t q_to_vec_dot = ggml_get_type_traits_cpu(k_vec_dot_type)->from_float;
